@@ -19,6 +19,8 @@ osgbpb = &FFD1
 
 argv = &F2
 
+IRQ1V = &204
+IRQ2V = &206
 EVENTV = &0220
 
 INKEY_esc = 112
@@ -35,11 +37,14 @@ NOP_OP = $ea
 
 _DEBUG = TRUE
 _WAIT_KEYPRESS = FALSE				; could implement play/pause/step
-_ENABLE_EVENTS = TRUE
+_ENABLE_EVENTS = FALSE
 _ENABLE_WALLCLOCK = TRUE
 _COUNT_DECRUNCHES = FALSE
 _TRY_TO_MATCH_FRAMERATE = FALSE
 _CHECK_LOAD_BUFFER = FALSE
+_ENABLE_IRQ_VSYNC = TRUE
+_ENABLE_WORK_SPLIT = TRUE
+
 
 \ ******************************************************************
 \ *	Define macros
@@ -82,6 +87,7 @@ VID_default_mode7_ypos = 3
 VID_default_frame_height = 19		; 14 = Grav
 VID_default_frame_size = (MODE7_char_width * VID_default_frame_height)
 VID_default_frame_addr = MODE7_base_addr + (VID_default_mode7_ypos * MODE7_char_width)
+VID_decode_bytes_per_work = 4		; must be exactly divided into VID_frame_size (for now) - use N lines!
 
 DFS_track_size = (10 * 256)
 
@@ -91,7 +97,10 @@ DISK1_last_track = 79		; could potentially deduce these from DFS catalog
 DISK2_first_track = 1
 DISK2_last_track = 79		; doesn't actually matter as data stream should indicate end of buffer
 
-STREAM_buffer_size = (4 * DFS_track_size)
+STREAM_num_tracks_ahead = 4			; B-Em & jsbeeb ok with 3, BeebEM requires 4
+STREAM_buffer_size = (STREAM_num_tracks_ahead * DFS_track_size)
+
+TIMER_latch = (20 * 64) - 2				; four times per 50Hz frame
 
 \ ******************************************************************
 \ *	Define fast (zero page) runtime variables
@@ -147,6 +156,14 @@ ENDIF
 
 IF _COUNT_DECRUNCHES
 .decrunch_count			SKIP 2
+ENDIF
+IF _ENABLE_IRQ_VSYNC
+.old_irqv				SKIP 2
+.timer_lock				SKIP 1
+ENDIF
+
+IF _ENABLE_WORK_SPLIT
+.work_bytes				SKIP 1
 ENDIF
 
 \ ******************************************************************
@@ -207,6 +224,9 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	IF _COUNT_DECRUNCHES
 	STA decrunch_count
 	STA decrunch_count+1
+	ENDIF
+	IF _ENABLE_IRQ_VSYNC
+	STA timer_lock
 	ENDIF
 
 	LDA #&FF
@@ -270,14 +290,39 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	JSR start_eventv
 	ENDIF
 
+	IF _ENABLE_IRQ_VSYNC
+	SEI
+	LDA IRQ1V:STA old_irqv
+	LDA IRQ1V+1:STA old_irqv+1
+	
+	LDA #LO(irq_handler):STA IRQ1V
+	LDA #HI(irq_handler):STA IRQ1V+1		; set interrupt handler
+
+	LDA #64						; A=00000000
+	STA &FE4B					; R11=Auxillary Control Register (timer 1 latched mode)
+
+	LDX #&FF					; X=11111111
+	STX &FE44					; R4=T1 Low-Order Latches (write)
+	STX &FE45					; R5=T1 High-Order Counter
+	
+	LDA #LO(TIMER_latch)
+	STA &FE46
+	LDA #HI(TIMER_latch)
+	STA &FE47
+
+	LDA #&C0					; A=11000000
+	STA &FE4E					; R14=Interrupt Enable (enable imer 1 interrupt)
+	CLI
+	ENDIF
+
 	\\ Top of our loop
 	.next_frame
 
 	\\ Wait vsync
-	LDA #19
-	JSR osbyte
+;	LDA #19
+;	JSR osbyte
 
-	IF _ENABLE_EVENTS = FALSE
+	IF (_ENABLE_EVENTS = FALSE) AND (_ENABLE_IRQ_VSYNC = FALSE)
 	\\ Increment frame counter
 	{
 		INC frame_no
@@ -295,7 +340,7 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	JSR write_debug_info
 	ENDIF
 
-	IF _ENABLE_EVENTS = FALSE
+	IF (_ENABLE_EVENTS = FALSE) AND (_ENABLE_IRQ_VSYNC = FALSE)
 	IF _WAIT_KEYPRESS
 	{
 		.no_key_pressed
@@ -347,6 +392,13 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	.track_load_error
 	IF _ENABLE_EVENTS
 	JSR stop_eventv
+	ENDIF
+
+	IF _ENABLE_IRQ_VSYNC
+	SEI
+	LDA old_irqv:STA IRQ1V
+	LDA old_irqv+1:STA IRQ1V+1		; set interrupt handler
+	CLI
 	ENDIF
 
 	\\ Exit cleanly (we hope)
@@ -521,7 +573,7 @@ IF _DEBUG
 	JSR debug_write_hex
 
 	INY
-	IF _ENABLE_EVENTS
+	IF _ENABLE_EVENTS OR _ENABLE_IRQ_VSYNC
 	LDA vsync_count
 	JSR debug_write_hex
 	ELSE
@@ -594,6 +646,181 @@ ENDIF
 	RTS
 }
 
+IF _ENABLE_WORK_SPLIT
+.decode_entire_frame_do_work
+{
+	\\ Write N bytes of entire frame this work slice
+
+	LDX #VID_decode_bytes_per_work
+
+	\ Get a byte, write a byte
+	.loop
+	STX work_bytes
+
+	JSR get_decrunched_byte
+	BCS return				; read error
+	LDY #0
+	STA (writeptr),Y
+
+	\\ Increment our write address
+	INC writeptr
+	BNE no_carry
+	INC writeptr+1
+	.no_carry
+
+	\\ Decrement number of bytes until done
+	LDX work_bytes
+	DEX
+	BNE loop
+
+	\\ Have we hit the end of our VID frame?
+	LDA writeptr
+	CMP VID_frame_end			; #LO(VID_frame_addr + VID_frame_size)
+	BNE not_finished
+	LDA writeptr+1
+	CMP VID_frame_end+1			; #HI(VID_frame_addr + VID_frame_size)
+	BNE not_finished
+
+	\\ Yes - set num_detas back to zero to indicate this
+	STX num_deltas
+	STX num_deltas+1
+
+	\\ No - carry on
+	.not_finished
+	CLC						; no read error
+
+	.return
+	RTS
+}
+
+.decode_delta_frame_do_work
+{
+	LDX #VID_decode_bytes_per_work
+
+	.loop
+	BEQ done_work
+	STX work_bytes
+
+	\\ Check if we're done
+	LDA num_deltas
+	BNE not_zero
+	LDA num_deltas+1
+	BNE not_zero
+
+	\\  Zero deltas left
+	.done_work
+	CLC
+
+	.return
+	RTS
+
+	.not_zero
+	\\ Get packed 16-bit delta
+	JSR get_decrunched_byte
+	BCS return
+	STA packed_delta
+
+	JSR get_decrunched_byte
+	BCS return
+	STA packed_delta+1
+
+	\\ Decode offset (10 bits)
+	CLC
+	LDA packed_delta
+	ADC writeptr
+	STA writeptr
+
+	LDA packed_delta+1
+	AND #&3						; only need bottom 2 bits
+	ADC writeptr+1
+	STA writeptr+1
+
+	\\ Decode pixels into MODE 7 byte (6 bits)
+	\\ 00X1 1111
+	\\ 0X01 1111
+	\\ 0X11 1111
+
+	LDA packed_delta+1
+	AND #128					; top bit 7
+	LSR A						; shift down to bit 6
+	STA shifted_bit
+
+	LDA packed_delta+1	
+	LSR A
+	LSR A						; shift down twice
+	ORA #32						; always need 32 for MODE 7
+	ORA shifted_bit				; mask in bit 6
+
+	\\ Write to screen! (do this without indirect write?)
+	LDY #0
+	STA (writeptr),Y
+
+	\\ Decrement delta count
+	SEC
+	LDA num_deltas
+	SBC #1
+	STA num_deltas
+	LDA num_deltas+1
+	SBC #0
+	STA num_deltas+1
+
+	LDX work_bytes
+	DEX
+
+	\\ Next delta
+	JMP loop
+}
+
+.decode_frame_data_do_work
+{
+	\\ Check if this is a special frame before we start
+	LDA num_deltas+1
+	CMP #&FF
+	BEQ special_frame
+
+	\\ Regular frame (deltas)
+	JSR decode_delta_frame_do_work
+	RTS
+
+	\\ Special frame
+	.special_frame
+	LDA num_deltas
+	BEQ full_frame					; &FFFF indicates end of stream
+
+	\\ End of stream
+	INC error_flag
+	BNE return
+
+	\\ Write entire frame (<=1000 bytes)
+	.full_frame
+	JSR decode_entire_frame_do_work
+
+	.return
+	RTS
+}
+
+.decode_frame_data
+{
+	.loop
+	\\ Check if we're done
+	LDA num_deltas
+	BNE not_zero
+	LDA num_deltas+1
+	BNE not_zero
+
+	\\  Zero deltas left
+	CLC
+
+	.return
+	RTS
+
+	.not_zero
+	JSR decode_frame_data_do_work
+	BCS return						; error
+
+	JMP loop
+}
+ELSE
 .decode_frame_data
 {
 	\\ Check if this is a special frame before we start
@@ -682,6 +909,7 @@ ENDIF
 	.return
 	RTS
 }
+ENDIF
 
 \ ******************************************************************
 \ *	File loading routines
@@ -767,6 +995,7 @@ ENDIF
 \ *	Event driven main loop
 \ ******************************************************************
 
+IF _ENABLE_EVENTS
 .decode_eventv
 {
 	php
@@ -775,7 +1004,9 @@ ENDIF
 	JMP not_vsync
 
 	.vsync
+	IF _ENABLE_IRQ_VSYNC = FALSE
 	INC vsync_count
+	ENDIF
 
 	\\ Preserve registers
 	pha
@@ -813,9 +1044,9 @@ ENDIF
 
 	\\ Indicate our frame rate
 	DEC vsync_count
-	IF _TRY_TO_MATCH_FRAMERATE
+\\	IF _TRY_TO_MATCH_FRAMERATE
 	DEC vsync_count
-	ENDIF
+\\	ENDIF
 
 	\\ Release our lock
 	DEC decode_lock
@@ -831,7 +1062,7 @@ ENDIF
 	
 	.early_out
 
-	IF _ENABLE_WALLCLOCK
+	IF _ENABLE_WALLCLOCK AND (_ENABLE_IRQ_VSYNC = FALSE)
 	\\ Increment wall clock
 	CLC
 	LDA clock_vsync
@@ -851,7 +1082,135 @@ ENDIF
 	plp
 	rts
 }
+ENDIF
 
+\ ******************************************************************
+\ * IRQ
+\ ******************************************************************
+
+IF _ENABLE_IRQ_VSYNC
+.irq_handler
+{
+	LDA &FC
+	PHA
+
+	\\ Which interrupt?
+	LDA &FE4D
+	AND #2
+	BNE is_vsync
+
+	\\ Timer 1
+	LDA &FE4D
+	AND #&40
+	BEQ return_vsync
+
+	STA &FE4D			; acknowledge Timer 1
+
+	\\ Check if we're doing work or not
+	LDA decode_lock
+	BEQ return_vsync
+
+	LDA timer_lock
+	BEQ do_some_work
+
+	\\ BOMB!
+	BRK
+
+	\\ We're in timer
+	.do_some_work
+	INC timer_lock
+
+	\\ Do some work!
+	TXA:PHA:TYA:PHA
+	JSR decode_frame_data_do_work
+	PLA:TAY:PLA:TAX
+	BCS read_error
+
+	\\ Check if we're done
+	LDA num_deltas
+	BNE return_timer
+	LDA num_deltas+1
+	BNE return_timer
+
+	\\ We finished our work!
+
+	\\ Indicate our frame rate
+	DEC vsync_count
+	IF _TRY_TO_MATCH_FRAMERATE
+	DEC vsync_count
+	ENDIF
+
+	\\ Remove our work lock
+	DEC decode_lock
+
+	\\ Pass on to OS IRQ handler
+	.return_timer
+
+	\\ Remove our timer lock
+	DEC timer_lock
+
+	PLA				; LDA &FC
+	RTI				; JMP (old_irqv)
+
+	.is_vsync
+	\\ Acknowledge vsync interrupt - this swallows it for everyone else!
+	STA &FE4D
+
+	\\ Increment vsync counter
+	INC vsync_count
+
+	IF _ENABLE_WALLCLOCK
+	\\ Increment wall clock
+	CLC
+	LDA clock_vsync
+	ADC #1
+	CMP #50
+	BCC no_secs
+	INC clock_secs
+	SBC #50
+	.no_secs
+	STA clock_vsync
+	ENDIF
+
+	\\ If we're already busy just exit function
+	LDA decode_lock
+	BNE return_vsync
+
+	\\ If we're ahead of video frame rate early out
+	IF _TRY_TO_MATCH_FRAMERATE
+	LDA vsync_count
+	BMI return_vsync
+	ENDIF
+
+	\\ Set a lock on our decode function
+	INC decode_lock
+	
+	\\ Increment frame counter
+	{
+		INC frame_no
+		BNE no_carry
+		INC frame_no+1
+		.no_carry
+	}
+
+	\\ Decode frame header
+	TXA:PHA:TYA:PHA
+	JSR decode_frame_header
+	PLA:TAY:PLA:TAX
+
+	\\ No error
+	BCC return_vsync
+
+	\\ Indicate error
+	.read_error
+	INC error_flag
+
+	.return_vsync
+	\\ Exit
+	PLA					; LDA &FC
+	JMP (old_irqv)		; RTI
+}
+ENDIF
 
 \ ******************************************************************
 \ *	Set up MODE 7 screen
