@@ -79,7 +79,7 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
-    <LibraryPath>lpng1624\projects\visualc71\Win32_LIB_Release\Zlib;lpng1624\projects\visualc71\Win32_LIB_Release;..\jpeg-6b\Release;$(LibraryPath)</LibraryPath>
+    <LibraryPath>..\lpng1624\projects\visualc71\Win32_LIB_Release\Zlib;..\lpng1624\projects\visualc71\Win32_LIB_Release;..\jpeg-6b\Release;$(LibraryPath)</LibraryPath>
     <OutDir>$(SolutionDir)..\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -150,12 +150,10 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="mode7.h" />
     <ClInclude Include="targetver.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="image2mode7.cpp" />
-    <ClCompile Include="mode7.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -44,3 +44,6 @@ extern unsigned char char_for_xpos_in_state[MAX_STATE][MODE7_WIDTH + 1];
 
 extern bool global_use_hold;
 extern bool global_use_fill;
+
+// Ideal interface - pass in image that has been presized to 78x75 and quantised to 3-bit colour?
+//void convert_image_to_mode7(void *ptr_to_image, unsigned char *ptr_to_mode7)
