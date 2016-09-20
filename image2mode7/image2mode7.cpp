@@ -1,5 +1,8 @@
 // image2mode7.cpp : Defines the entry point for the console application.
 //
+// Generic image -> mode 7 (aka Teletext) conversion routine
+// Based on an initial algorithm by Puppeh (Julian Brown)
+//
 
 #include "targetver.h"
 
@@ -7,6 +10,11 @@
 #include <tchar.h>
 
 #include "CImg.h"
+
+extern "C"
+{
+#include "b64/cencode.h"
+}
 
 using namespace cimg_library;
 
@@ -35,11 +43,14 @@ using namespace cimg_library;
 #define CLAMP(a,low,high)	((a) < (low) ? (low) : ((a) > (high) ? (high) : (a)))
 #define THRESHOLD(a,t)		((a) >= (t) ? 255 : 0)
 
-#define MAX_STATE (1U << 14)
+#define MAX_STATE			(1U << 14)
 #define GET_STATE(fg,bg,hold_mode,last_gfx_char)	((last_gfx_char) << 7 | (hold_mode) << 6 | ((bg) << 3) | (fg))
 
-#define IMAGE_X_FROM_X7(x7)	(((x7) - FRAME_FIRST_COLUMN) * image_pixels_per_char_w * 2)
-#define IMAGE_Y_FROM_Y7(x7)	((y7) * image_pixels_per_char_h * 3)
+#define IMAGE_X_FROM_X7(x7)	(((x7) - FRAME_FIRST_COLUMN) * 2)
+#define IMAGE_Y_FROM_Y7(x7)	((y7) * 3)
+
+#define MAX_3(A,B,C)		((A)>(B)?((A)>(C)?(A):(C)):(B)>(C)?(B):(C))
+#define MIN_3(A,B,C)		((A)<(B)?((A)<(C)?(A):(C)):(B)<(C)?(B):(C))
 
 #define _COLOUR_DEBUG		FALSE
 
@@ -55,9 +66,6 @@ static bool global_use_fill = true;
 
 static int frame_width;
 static int frame_height;
-
-static float image_pixels_per_char_w;
-static float image_pixels_per_char_h;
 
 void clear_error_char_arrays(void)
 {
@@ -274,13 +282,13 @@ unsigned char get_graphic_char_from_image(int x7, int y7, int fg, int bg)
 		// We have some pixels in this cell
 		// Calculate graphic character - if pixel == bg colour then off else on
 
-		graphic_char = 32 +																				// bit 5 always set!
-			+(get_colour_from_rgb(src(x, y, 0), src(x, y, 1), src(x, y, 2)) == bg ? 0 : 1)						// (x,y) = bit 0
-			+ (get_colour_from_rgb(src(x + 1, y, 0), src(x + 1, y, 1), src(x + 1, y, 2)) == bg ? 0 : 2)					// (x+1,y) = bit 1
-			+ (get_colour_from_rgb(src(x, y + 1, 0), src(x, y + 1, 1), src(x, y + 1, 2)) == bg ? 0 : 4)					// (x,y+1) = bit 2
-			+ (get_colour_from_rgb(src(x + 1, y + 1, 0), src(x + 1, y + 1, 1), src(x + 1, y + 1, 2)) == bg ? 0 : 8)			// (x+1,y+1) = bit 3
-			+ (get_colour_from_rgb(src(x, y + 2, 0), src(x, y + 2, 1), src(x, y + 2, 2)) == bg ? 0 : 16)				// (x,y+2) = bit 4
-			+ (get_colour_from_rgb(src(x + 1, y + 2, 0), src(x + 1, y + 2, 1), src(x + 1, y + 2, 2)) == bg ? 0 : 64);			// (x+1,y+2) = bit 6
+		graphic_char = 32 +																										// bit 5 always set!
+			+ (get_colour_from_rgb(src(x, y, 0),		 src(x, y, 1),			src(x, y, 2))			== bg ? 0 : 1)			// (x,y) = bit 0
+			+ (get_colour_from_rgb(src(x + 1, y, 0),	 src(x + 1, y, 1),		src(x + 1, y, 2))		== bg ? 0 : 2)			// (x+1,y) = bit 1
+			+ (get_colour_from_rgb(src(x, y + 1, 0),	 src(x, y + 1, 1),		src(x, y + 1, 2))		== bg ? 0 : 4)			// (x,y+1) = bit 2
+			+ (get_colour_from_rgb(src(x + 1, y + 1, 0), src(x + 1, y + 1, 1),	src(x + 1, y + 1, 2))	== bg ? 0 : 8)			// (x+1,y+1) = bit 3
+			+ (get_colour_from_rgb(src(x, y + 2, 0),	 src(x, y + 2, 1),		src(x, y + 2, 2))		== bg ? 0 : 16)			// (x,y+2) = bit 4
+			+ (get_colour_from_rgb(src(x + 1, y + 2, 0), src(x + 1, y + 2, 1),	src(x + 1, y + 2, 2))	== bg ? 0 : 64);		// (x+1,y+2) = bit 6
 	}
 	else
 	{
@@ -493,18 +501,44 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mo
 	return lowest_error;
 }
 
+int match_closest_palette_colour(unsigned char r, unsigned char g, unsigned char b)
+{
+	int min_error = INT_MAX;
+	int min_colour = -1;
+
+	for (int c = 0; c < 8; c++)
+	{
+		unsigned char cr = GET_RED_FROM_COLOUR(c);
+		unsigned char cg = GET_GREEN_FROM_COLOUR(c);
+		unsigned char cb = GET_BLUE_FROM_COLOUR(c);
+
+		int error = ((cr - r) * (cr - r)) + ((cg - g) * (cg - g)) + ((cb - b) * (cb - b));
+
+		if (error < min_error)
+		{
+			min_error = error;
+			min_colour = c;
+		}
+	}
+
+	return min_colour;
+}
+
 int main(int argc, char **argv)
 {
 	cimg_usage("MODE 7 image convertor.\n\nUsage : image2mode7 [options]");
 	const char *const input_name = cimg_option("-i", (char*)0, "Input filename");
-	const char *const output_name = cimg_option("-0", "mode7.bin", "Output filename");
-	const int gmode = cimg_option("-g", 0, "Colour to greyscale conversion (0=none, 1=red only, 2=green only, 3=blue only, 4=simple average, 5=luminence preserving");
-	const int thresh = cimg_option("-t", 127, "B&W threshold value");
-	const int dither = cimg_option("-d", 0, "Dither mode (0=none/threshold only, 1=floyd steinberg, 2=ordered 2x2, 3=ordered 3x3");
+	const char *const output_name = cimg_option("-0", (char*)0, "Output filename");
+	const int sat = cimg_option("-sat", 64, "Saturation threshold (below this colour is considered grey)");
+	const int value = cimg_option("-val", 64, "Value threshold (below this colour is considered black)");
+	const int black = cimg_option("-black", 64, "Black threshold (grey below this considered pure black - above is colour brightness ramp)");
+	const int white = cimg_option("-white", 128, "White threshold (grey above this considered pure white - below is colour brightness ramp)");
 	const bool no_hold = cimg_option("-nohold", false, "Disallow Hold Graphics control code");
 	const bool no_fill = cimg_option("-nofill", false, "Disallow New Background control code");
-	const bool simg = cimg_option("-simg", false, "Save test image (post-quantisation) before Teletext conversion");
+	const bool simg = cimg_option("-test", false, "Save test image (post-quantisation) before Teletext conversion");
+	const bool inf = cimg_option("-inf", false, "Save inf file for image");
 	const bool verbose = cimg_option("-v", false, "Verbose output");
+	const bool url = cimg_option("-url", false, "Spit out URL for edit.tf");
 
 	char filename[256];
 	FILE *file;
@@ -515,169 +549,187 @@ int main(int argc, char **argv)
 	global_use_hold = !no_hold;
 	global_use_fill = !no_fill;
 
+	if (verbose)
+	{
+		printf("Loading image file '%s'...\n", input_name);
+	}
+
 	src.assign(input_name);
 
 	//
 	// Colour conversion etc.
 	//
 
-	if (gmode)
+	if (verbose)
 	{
-		cimg_forXY(src, x, y)
-		{
-			src(x, y, 0) = pixel_to_grey(gmode, src(x, y, 0), src(x, y, 1), src(x, y, 2));
-			src(x, y, 1) = pixel_to_grey(gmode, src(x, y, 0), src(x, y, 1), src(x, y, 2));
-			src(x, y, 2) = pixel_to_grey(gmode, src(x, y, 0), src(x, y, 1), src(x, y, 2));
-		}
+		printf("Converting to MODE 7 palette...\n", input_name);
 	}
 
-	// Dithering
+	// Convert to HSV
 
-	if (dither == 0)					// None / threshold
+	cimg_forXY(src, x, y)
 	{
-		cimg_forXY(src, x, y)
-		{
-			src(x, y, 0) = THRESHOLD(src(x, y, 0), thresh);
-			src(x, y, 1) = THRESHOLD(src(x, y, 1), thresh);
-			src(x, y, 2) = THRESHOLD(src(x, y, 2), thresh);
-		}
-	}
-	else if (dither == 1)				// Floyd Steinberg
-	{
-		cimg_forXY(src, x, y)
-		{
-			int grey = src(x, y, 0);
-			src(x, y, 0) = THRESHOLD(grey, 128);
-			int error = grey - src(x, y, 0);
+		unsigned char R = src(x, y, 0);
+		unsigned char G = src(x, y, 1);
+		unsigned char B = src(x, y, 2);
 
-			if (x < src._width - 1)
+		unsigned char r, g, b;
+		r = g = b = 0;
+
+		unsigned char M = MAX_3(R, G, B);
+		unsigned char m = MIN_3(R, G, B);
+
+		unsigned char C = M - m;				// Chroma - black to white
+
+		unsigned char Hc = 0;					// Hue - as BBC colour palette
+
+		if (C != 0)
+		{
+			if (M == R)
 			{
-				grey = src(x + 1, y, 0) + error * 7 / 16;
-				src(x + 1, y, 0) = CLAMP(grey, 0, 255);
+				int h = 255 * (G - B) / C;
+
+				if (h > 127 ) Hc = 3;			// yellow
+				else if (h < -128) Hc = 5;		// magenta
+				else Hc = 1;					// red
 			}
-
-			if (y < src._height - 1)
+			else if (M == G)
 			{
-				if (x > 0)
-				{
-					grey = src(x - 1, y + 1, 0) + error * 3 / 16;
-					src(x - 1, y + 1, 0) = CLAMP(grey, 0, 255);
-				}
+				int h = 255 * (B - R) / C;
 
-				grey = src(x, y + 1, 0) + error * 5 / 16;
-				src(x, y + 1, 0) = CLAMP(grey, 0, 255);
+				if (h > 127) Hc = 6;			// cyan
+				else if (h < -128) Hc = 3;		// yellow
+				else Hc = 2;					// green
+			}
+			else if (M == B)
+			{
+				int h = 255 * (R - G) / C;
 
-				if (x < src._width - 1)
-				{
-					grey = src(x + 1, y + 1, 0) + error * 1 / 16;
-					src(x + 1, y + 1, 0) = CLAMP(grey, 0, 255);
-				}
-
+				if (h > 127) Hc = 5;			// magenta
+				else if (h < -128) Hc = 6;		// cyan
+				else Hc = 2;					// blue
 			}
 		}
-	}
-	else if (dither == 2)						// Ordered dither 2x2
-	{
-		cimg_forY(src, y)
+
+		unsigned char Y = (unsigned char)(0.2126f * R + 0.7152f * G + 0.0722f * B);		// Luma (screen brightess)
+
+		unsigned char V = M;					// Value
+
+		int S = 0;								// Saturation
+
+		if (C != 0)
 		{
-			cimg_forX(src, x)
-			{
-				int grey = src(x, y, 0) * 5 / 256;
-				src(x, y, 0) = THRESHOLD(grey, 1);
-
-				if (x < src._width - 1)
-				{
-					grey = src(x + 1, y, 0) * 5 / 256;
-					src(x + 1, y, 0) = THRESHOLD(grey, 3);
-				}
-
-				if (y < src._height - 1)
-				{
-					grey = src(x, y + 1, 0) * 5 / 256;
-					src(x, y + 1, 0) = THRESHOLD(grey, 4);
-
-					if (x < src._width - 1)
-					{
-						grey = src(x + 1, y + 1, 0) * 5 / 256;
-						src(x + 1, y + 1, 0) = THRESHOLD(grey, 2);
-					}
-				}
-				x++;
-			}
-			y++;
+			S = 255 * C / V;
 		}
-	}
-	else if (dither == 3)						// Ordered dither 3x3
-	{
-		cimg_forY(src, y)
+
+		// If saturation too low assume grey
+
+		if (S < sat)
 		{
-			cimg_forX(src, x)
-			{
-				int grey = src(x, y, 0) * 10 / 256;
-				src(x, y, 0) = THRESHOLD(grey, 1);
+			// Grey
+			// Adjust colour palette for grey scale
+			// Map value to colour ramp - change RAMP!
 
-				if (x < src._width - 1)
-				{
-					grey = src(x + 1, y, 0) * 10 / 256;
-					src(x + 1, y, 0) = THRESHOLD(grey, 8);
-				}
+			unsigned char Gc = 0;
+			int midpoint = (white - black) / 2;
 
-				if (x < src._width - 2)
-				{
-					grey = src(x + 2, y, 0) * 10 / 256;
-					src(x + 2, y, 0) = THRESHOLD(grey, 4);
-				}
-
-				if (y < src._height - 1)
-				{
-					grey = src(x, y + 1, 0) * 10 / 256;
-					src(x, y + 1, 0) = THRESHOLD(grey, 7);
-
-					if (x < src._width - 1)
-					{
-						grey = src(x + 1, y + 1, 0) * 10 / 256;
-						src(x + 1, y + 1, 0) = THRESHOLD(grey, 6);
-					}
-
-					if (x < src._width - 2)
-					{
-						grey = src(x + 2, y + 1, 0) * 10 / 256;
-						src(x + 2, y + 1, 0) = THRESHOLD(grey, 3);
-					}
-				}
-
-				if (y < src._height - 2)
-				{
-					grey = src(x, y + 2, 0) * 10 / 256;
-					src(x, y + 2, 0) = THRESHOLD(grey, 5);
-
-					if (x < src._width - 1)
-					{
-						grey = src(x + 1, y + 2, 0) * 10 / 256;
-						src(x + 1, y + 2, 0) = THRESHOLD(grey, 2);
-					}
-
-					if (x < src._width - 2)
-					{
-						grey = src(x + 2, y + 2, 0) * 10 / 256;
-						src(x + 2, y + 2, 0) = THRESHOLD(grey, 9);
-					}
-				}
-
-				x += 2;
-			}
-
-			y += 2;
+			if (V < black)
+				Gc = 0;
+			else if (V < black + midpoint)
+				Gc = 4;			// blue
+			else if (V < white)
+				Gc = 6;			// cyan
+			else
+				Gc = 7;			// white		// could use yellow?
+				
+			r = GET_RED_FROM_COLOUR(Gc);
+			g = GET_GREEN_FROM_COLOUR(Gc);
+			b = GET_BLUE_FROM_COLOUR(Gc);
 		}
+		else
+		{
+			// Colour
+			// If Value is too low then assume black
+
+			if (V < value)
+			{
+				// Black
+				r = g = b = 0;
+			}
+			else
+			{
+				// Not black = full colour
+
+				int c = match_closest_palette_colour(R, G, B);
+
+				r = GET_RED_FROM_COLOUR(c);
+				g = GET_GREEN_FROM_COLOUR(c);
+				b = GET_BLUE_FROM_COLOUR(c);
+			}
+		}
+
+		src(x, y, 0) = r;
+		src(x, y, 1) = g;
+		src(x, y, 2) = b;
 	}
 
+	// Dithering?
+
+	
 	//
 	// Save output of colour conversion for debug
 	//
 
 	if (simg)
 	{
-		sprintf(filename, "%s.png", output_name);
+		if (verbose)
+		{
+			printf("Saving test image '%s_quant.png'...\n", input_name);
+		}
+
+		sprintf(filename, "%s_quant.png", input_name);
+		src.save(filename);
+	}
+
+	//
+	// Resize!
+	//
+
+	// Calculate frame size - adjust to width
+	int pixel_width = (MODE7_WIDTH - FRAME_FIRST_COLUMN) * 2;
+	int pixel_height = pixel_width * IMAGE_H / IMAGE_W;
+	if (pixel_height % 3) pixel_height += (3 - (pixel_height % 3));
+
+	// Adjust to height
+	if (pixel_height > MODE7_PIXEL_H)
+	{
+		pixel_height = MODE7_PIXEL_H;
+		pixel_width = pixel_height * IMAGE_W / IMAGE_H;
+
+		if (pixel_width % 1) pixel_width++;
+
+		// Need to handle reset of background if frame_width < MODE7_WIDTH
+	}
+
+	// Resize image to this size
+
+	if (verbose)
+	{
+		printf("Resizing from %d x %d to %d x %d pixels...\n", src._width, src._height, pixel_width, pixel_height);
+	}
+
+	src.resize(pixel_width, pixel_height);
+
+	// Save test images for debug
+
+	if (simg)
+	{
+		if (verbose)
+		{
+			printf("Saving test image '%s_small.png'...\n", input_name);
+		}
+
+		sprintf(filename, "%s_small.png", input_name);
 		src.save(filename);
 	}
 
@@ -685,22 +737,16 @@ int main(int argc, char **argv)
 	// Conversion to MODE 7
 	//
 
-	// Set everything to blank
-	memset(mode7, MODE7_BLANK, MODE7_MAX_SIZE);
+	frame_width = pixel_width / 2;
+	frame_height = pixel_height / 3;
 
-	// Calculate frame size - adjust to width
-	frame_width = MODE7_PIXEL_W / 2;
-	frame_height = MODE7_PIXEL_W * IMAGE_H / (3 * IMAGE_W);			// this needs to be rounded up to whole char
-
-	// Unless this doesn't fit - adjust to height
-	if (frame_height > MODE7_HEIGHT)
+	if (verbose)
 	{
-		frame_height = MODE7_PIXEL_H / 3;
-		frame_width = MODE7_PIXEL_H * IMAGE_W / (2 * IMAGE_H);
+		printf("Converting to MODE 7 screen size %d x %d...\n", frame_width, frame_height);
 	}
 
-	image_pixels_per_char_w = IMAGE_W / (frame_width * 2);
-	image_pixels_per_char_h = IMAGE_H / (frame_height * 3);
+	// Set everything to blank
+	memset(mode7, MODE7_BLANK, MODE7_MAX_SIZE);
 
 	for(int y7 = 0; y7 < frame_height; y7++)
 	{
@@ -771,7 +817,7 @@ int main(int argc, char **argv)
 		char_for_xpos_in_state[state][FRAME_FIRST_COLUMN] = output[FRAME_FIRST_COLUMN];
 
 		// Copy the resulting character data into MODE 7 screen
-		for (int x7 = FRAME_FIRST_COLUMN; x7 < MODE7_WIDTH; x7++)
+		for (int x7 = FRAME_FIRST_COLUMN; x7 < (FRAME_FIRST_COLUMN + FRAME_WIDTH); x7++)
 		{
 			// Copy character chosen in this position for this state
 			unsigned char best_char = char_for_xpos_in_state[state][x7];
@@ -787,9 +833,30 @@ int main(int argc, char **argv)
 		y += 2;
 	}
 
-	printf("frame size = %d\n", FRAME_SIZE);
+	if (verbose)
+	{
+		printf("MODE 7 frame size = %d bytes\n", FRAME_SIZE);
+	}
 
-	file = fopen(output_name, "w");
+	if (output_name)
+	{
+		if (verbose)
+		{
+			printf("Writing MODE 7 frame '%s'...\n", output_name);
+		}
+
+		file = fopen(output_name, "wb");
+	}
+	else
+	{
+		if (verbose)
+		{
+			printf("Writing MODE 7 frame '%s.bin'...\n", input_name);
+		}
+
+		sprintf(filename, "%s.bin", input_name);
+		file = fopen(filename, "wb");
+	}
 
 	if (file)
 	{
@@ -797,18 +864,114 @@ int main(int argc, char **argv)
 		fclose(file);
 	}
 
-	/*
-	sprintf(filename, "%s.inf",output_filename);
-	file = fopen((const char*)filename, "wb");
-
-	if (file)
+	if (inf)
 	{
-		sprintf(buffer, "$.BAD%d\tFF7C00 FF7C00\n", n);
-		fwrite(buffer, 1, strlen(buffer), file);
-		fclose(file);
+		if (output_name)
+		{
+			if (verbose)
+			{
+				printf("Writing inf file '%s.inf'...\n", output_name);
+			}
+
+			sprintf(filename, "%s.inf", output_name);
+		}
+		else
+		{
+			if (verbose)
+			{
+				printf("Writing inf file '%s.bin.inf'...\n", input_name);
+			}
+
+			sprintf(filename, "%s.bin.inf", input_name);
+		}
+
+		file = fopen((const char*)filename, "wb");
+
+		if (file)
+		{
+			char buffer[256];
+			sprintf(buffer, "$.IMAGE      FF7C00 FF7C00\n");
+
+			fwrite(buffer, 1, strlen(buffer), file);
+			fclose(file);
+		}
 	}
-	*/
-		
+
+	if (url)
+	{
+		/* set up a destination buffer large enough to hold the encoded data */
+		unsigned char *mode77 = (unsigned char *)malloc((MODE7_MAX_SIZE * 7) / 8);
+		unsigned char *bits7 = mode77;
+
+		if (verbose)
+		{
+			printf("Calculating edit.tf URL...\n", input_name);
+		}
+
+		for (int i = 0; i < MODE7_MAX_SIZE; i+=8)
+		{
+			// 8 enter, 7 leave
+			unsigned char c;
+
+			c = mode7[i];					// 1
+			*bits7 = (c & 0x7f) << 1;
+
+			c = mode7[i + 1];				// 2
+			*bits7++ |= (c & 0x40) >> 6;
+			*bits7 = (c & 0x3f) << 2;
+
+			c = mode7[i + 2];				// 3
+			*bits7++ |= (c & 0x60) >> 5;
+			*bits7 = (c & 0x1f) << 3;
+
+			c = mode7[i + 3];				// 4
+			*bits7++ |= (c & 0x70) >> 4;
+			*bits7 = (c & 0x0f) << 4;
+
+			c = mode7[i + 4];				// 5
+			*bits7++ |= (c & 0x78) >> 3;
+			*bits7 = (c & 0x07) << 5;
+
+			c = mode7[i + 5];				// 6
+			*bits7++ |= (c & 0x7c) >> 2;
+			*bits7 = (c & 0x03) << 6;
+
+			c = mode7[i + 6];				// 7
+			*bits7++ |= (c & 0x7e) >> 1;
+			*bits7 = (c & 0x01) << 7;
+
+			c = mode7[i + 7];				// 8
+			*bits7++ |= (c & 0x7f);
+		}
+
+		char* base64 = (char*)malloc(4 + (MODE7_MAX_SIZE * 7) / 6);
+		/* keep track of our encoded position */
+		char* c = base64;
+		/* store the number of bytes encoded by a single call */
+		int cnt = 0;
+		/* we need an encoder state */
+		base64_encodestate s;
+
+		/*---------- START ENCODING ----------*/
+		/* initialise the encoder state */
+		base64_init_encodestate(&s);
+		/* gather data from the input and send it to the output */
+		cnt = base64_encode_block((const char *)mode77, (MODE7_MAX_SIZE * 7) / 8, c, &s);
+		c += cnt;
+		/* since we have encoded the entire input string, we know that
+		there is no more input data; finalise the encoding */
+		cnt = base64_encode_blockend(c, &s);
+		c += cnt;
+		/*---------- STOP ENCODING  ----------*/
+
+		/* we want to print the encoded data, so null-terminate it: */
+		*c = 0;
+
+		printf("http://edit.tf/#0:%s\n", base64);
+
+		free(base64);
+		free(mode77);
+	}
+	
 	return 0;
 }
-
