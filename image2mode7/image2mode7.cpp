@@ -828,6 +828,13 @@ int main(int argc, char **argv)
 			state = get_state_for_char(best_char, state);
 		}
 
+		// For when image is narrower than screen width
+
+		if (FRAME_FIRST_COLUMN + FRAME_WIDTH < MODE7_WIDTH)
+		{
+			mode7[(y7 * MODE7_WIDTH) + FRAME_FIRST_COLUMN + FRAME_WIDTH] = MODE7_BLACK_BG;
+		}
+
 		// printf("\n");
 
 		y += 2;
