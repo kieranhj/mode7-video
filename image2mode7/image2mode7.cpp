@@ -528,7 +528,7 @@ int main(int argc, char **argv)
 {
 	cimg_usage("MODE 7 image convertor.\n\nUsage : image2mode7 [options]");
 	const char *const input_name = cimg_option("-i", (char*)0, "Input filename");
-	const char *const output_name = cimg_option("-0", (char*)0, "Output filename");
+	const char *const output_name = cimg_option("-o", (char*)0, "Output filename");
 	const int sat = cimg_option("-sat", 64, "Saturation threshold (below this colour is considered grey)");
 	const int value = cimg_option("-val", 64, "Value threshold (below this colour is considered black)");
 	const int black = cimg_option("-black", 64, "Black threshold (grey below this considered pure black - above is colour brightness ramp)");
