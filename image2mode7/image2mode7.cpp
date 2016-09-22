@@ -535,6 +535,8 @@ int main(int argc, char **argv)
 	const int white = cimg_option("-white", 128, "White threshold (grey above this considered pure white - below is colour brightness ramp)");
 	const bool no_hold = cimg_option("-nohold", false, "Disallow Hold Graphics control code");
 	const bool no_fill = cimg_option("-nofill", false, "Disallow New Background control code");
+	const bool no_quant = cimg_option("-noquant", false, "Don't do colour (3-bit) quantisation step");
+	const bool no_scale = cimg_option("-noscale", false, "Don't scale image before Teletext conversion");
 	const bool simg = cimg_option("-test", false, "Save test image (post-quantisation) before Teletext conversion");
 	const bool inf = cimg_option("-inf", false, "Save inf file for image");
 	const bool verbose = cimg_option("-v", false, "Verbose output");
@@ -560,121 +562,128 @@ int main(int argc, char **argv)
 	// Colour conversion etc.
 	//
 
-	if (verbose)
+	if (no_quant)
 	{
-		printf("Converting to MODE 7 palette...\n", input_name);
+		if (verbose)
+		{
+			printf("Skipping conversion to MODE 7 palette...\n");
+		}
 	}
-
-	// Convert to HSV
-
-	cimg_forXY(src, x, y)
+	else
 	{
-		unsigned char R = src(x, y, 0);
-		unsigned char G = src(x, y, 1);
-		unsigned char B = src(x, y, 2);
-
-		unsigned char r, g, b;
-		r = g = b = 0;
-
-		unsigned char M = MAX_3(R, G, B);
-		unsigned char m = MIN_3(R, G, B);
-
-		unsigned char C = M - m;				// Chroma - black to white
-
-		unsigned char Hc = 0;					// Hue - as BBC colour palette
-
-		if (C != 0)
+		if (verbose)
 		{
-			if (M == R)
-			{
-				int h = 255 * (G - B) / C;
-
-				if (h > 127 ) Hc = 3;			// yellow
-				else if (h < -128) Hc = 5;		// magenta
-				else Hc = 1;					// red
-			}
-			else if (M == G)
-			{
-				int h = 255 * (B - R) / C;
-
-				if (h > 127) Hc = 6;			// cyan
-				else if (h < -128) Hc = 3;		// yellow
-				else Hc = 2;					// green
-			}
-			else if (M == B)
-			{
-				int h = 255 * (R - G) / C;
-
-				if (h > 127) Hc = 5;			// magenta
-				else if (h < -128) Hc = 6;		// cyan
-				else Hc = 2;					// blue
-			}
+			printf("Converting to MODE 7 palette...\n");
 		}
 
-		unsigned char Y = (unsigned char)(0.2126f * R + 0.7152f * G + 0.0722f * B);		// Luma (screen brightess)
+		// Convert to HSV
 
-		unsigned char V = M;					// Value
-
-		int S = 0;								// Saturation
-
-		if (C != 0)
+		cimg_forXY(src, x, y)
 		{
-			S = 255 * C / V;
-		}
+			unsigned char R = src(x, y, 0);
+			unsigned char G = src(x, y, 1);
+			unsigned char B = src(x, y, 2);
 
-		// If saturation too low assume grey
+			unsigned char r, g, b;
+			r = g = b = 0;
 
-		if (S < sat)
-		{
-			// Grey
-			// Adjust colour palette for grey scale
-			// Map value to colour ramp - change RAMP!
+			unsigned char M = MAX_3(R, G, B);
+			unsigned char m = MIN_3(R, G, B);
 
-			unsigned char Gc = 0;
-			int midpoint = (white - black) / 2;
+			unsigned char C = M - m;				// Chroma - black to white
 
-			if (V < black)
-				Gc = 0;
-			else if (V < black + midpoint)
-				Gc = 4;			// blue
-			else if (V < white)
-				Gc = 6;			// cyan
+			unsigned char Hc = 0;					// Hue - as BBC colour palette
+
+			if (C != 0)
+			{
+				if (M == R)
+				{
+					int h = 255 * (G - B) / C;
+
+					if (h > 127) Hc = 3;			// yellow
+					else if (h < -128) Hc = 5;		// magenta
+					else Hc = 1;					// red
+				}
+				else if (M == G)
+				{
+					int h = 255 * (B - R) / C;
+
+					if (h > 127) Hc = 6;			// cyan
+					else if (h < -128) Hc = 3;		// yellow
+					else Hc = 2;					// green
+				}
+				else if (M == B)
+				{
+					int h = 255 * (R - G) / C;
+
+					if (h > 127) Hc = 5;			// magenta
+					else if (h < -128) Hc = 6;		// cyan
+					else Hc = 2;					// blue
+				}
+			}
+
+			unsigned char Y = (unsigned char)(0.2126f * R + 0.7152f * G + 0.0722f * B);		// Luma (screen brightess)
+
+			unsigned char V = M;					// Value
+
+			int S = 0;								// Saturation
+
+			if (C != 0)
+			{
+				S = 255 * C / V;
+			}
+
+			// If saturation too low assume grey
+
+			if (S < sat)
+			{
+				// Grey
+				// Adjust colour palette for grey scale
+				// Map value to colour ramp - change RAMP!
+
+				unsigned char Gc = 0;
+				int midpoint = (white - black) / 2;
+
+				if (V < black)
+					Gc = 0;
+				else if (V < black + midpoint)
+					Gc = 4;			// blue
+				else if (V < white)
+					Gc = 6;			// cyan
+				else
+					Gc = 7;			// white		// could use yellow?
+
+				r = GET_RED_FROM_COLOUR(Gc);
+				g = GET_GREEN_FROM_COLOUR(Gc);
+				b = GET_BLUE_FROM_COLOUR(Gc);
+			}
 			else
-				Gc = 7;			// white		// could use yellow?
-				
-			r = GET_RED_FROM_COLOUR(Gc);
-			g = GET_GREEN_FROM_COLOUR(Gc);
-			b = GET_BLUE_FROM_COLOUR(Gc);
-		}
-		else
-		{
-			// Colour
-			// If Value is too low then assume black
-
-			if (V < value)
 			{
-				// Black
-				r = g = b = 0;
-			}
-			else
-			{
-				// Not black = full colour
+				// Colour
+				// If Value is too low then assume black
 
-				int c = match_closest_palette_colour(R, G, B);
+				if (V < value)
+				{
+					// Black
+					r = g = b = 0;
+				}
+				else
+				{
+					// Not black = full colour
 
-				r = GET_RED_FROM_COLOUR(c);
-				g = GET_GREEN_FROM_COLOUR(c);
-				b = GET_BLUE_FROM_COLOUR(c);
+					int c = match_closest_palette_colour(R, G, B);
+
+					r = GET_RED_FROM_COLOUR(c);
+					g = GET_GREEN_FROM_COLOUR(c);
+					b = GET_BLUE_FROM_COLOUR(c);
+				}
 			}
+
+			src(x, y, 0) = r;
+			src(x, y, 1) = g;
+			src(x, y, 2) = b;
 		}
-
-		src(x, y, 0) = r;
-		src(x, y, 1) = g;
-		src(x, y, 2) = b;
 	}
-
-	// Dithering?
-
 	
 	//
 	// Save output of colour conversion for debug
@@ -695,31 +704,47 @@ int main(int argc, char **argv)
 	// Resize!
 	//
 
-	// Calculate frame size - adjust to width
-	int pixel_width = (MODE7_WIDTH - FRAME_FIRST_COLUMN) * 2;
-	int pixel_height = pixel_width * IMAGE_H / IMAGE_W;
-	if (pixel_height % 3) pixel_height += (3 - (pixel_height % 3));
+	int pixel_width;
+	int pixel_height;
 
-	// Adjust to height
-	if (pixel_height > MODE7_PIXEL_H)
+	if (no_scale)
 	{
-		pixel_height = MODE7_PIXEL_H;
-		pixel_width = pixel_height * IMAGE_W / IMAGE_H;
+		if (verbose)
+		{
+			printf("Skipping image resize from %d x %d...\n", src._width, src._height);
+		}
 
-		if (pixel_width % 1) pixel_width++;
-
-		// Need to handle reset of background if frame_width < MODE7_WIDTH
+		pixel_width = src._width;
+		pixel_height = src._height;
 	}
-
-	// Resize image to this size
-
-	if (verbose)
+	else
 	{
-		printf("Resizing from %d x %d to %d x %d pixels...\n", src._width, src._height, pixel_width, pixel_height);
+		// Calculate frame size - adjust to width
+		pixel_width = (MODE7_WIDTH - FRAME_FIRST_COLUMN) * 2;
+		pixel_height = pixel_width * IMAGE_H / IMAGE_W;
+
+		if (pixel_height % 3) pixel_height += (3 - (pixel_height % 3));
+
+		// Adjust to height
+		if (pixel_height > MODE7_PIXEL_H)
+		{
+			pixel_height = MODE7_PIXEL_H;
+			pixel_width = pixel_height * IMAGE_W / IMAGE_H;
+
+			if (pixel_width % 1) pixel_width++;
+
+			// Need to handle reset of background if frame_width < MODE7_WIDTH
+		}
+
+		// Resize image to this size
+
+		if (verbose)
+		{
+			printf("Resizing from %d x %d to %d x %d pixels...\n", src._width, src._height, pixel_width, pixel_height);
+		}
+
+		src.resize(pixel_width, pixel_height);
 	}
-
-	src.resize(pixel_width, pixel_height);
-
 	// Save test images for debug
 
 	if (simg)
