@@ -174,27 +174,11 @@ unsigned char pixel_to_grey(int mode, unsigned char r, unsigned char g, unsigned
 
 // Hold graphics mode means use last known (used on the line) graphic character in place of space when emitting a control code (reset if using alphanumerics not graphics)
 
-// Functions - get_error_for_char(int x7, int y7, unsigned char code, int fg, int bg, unsigned char hold_char)
-int get_error_for_char(int x7, int y7, unsigned char proposed_char, int fg, int bg, bool hold_mode, unsigned char last_gfx_char)
+int get_error_for_screen_char(int x7, int y7, unsigned char screen_char, int fg, int bg)
 {
 	int x = IMAGE_X_FROM_X7(x7);
 	int y = IMAGE_Y_FROM_Y7(y7);
 	int error = 0;
-
-	// If proposed character >= 128 then this is a control code
-	// If so then the hold char will be displayed on screen
-	// Otherwise it will be our proposed character (pixels)
-
-	unsigned char screen_char;
-
-	if (hold_mode)
-	{
-		screen_char = (proposed_char >= 128) ? last_gfx_char : proposed_char;
-	}
-	else
-	{
-		screen_char = (proposed_char >= 128) ? MODE7_BLANK : proposed_char;
-	}
 
 	unsigned char screen_r, screen_g, screen_b;
 	unsigned char image_r, image_g, image_b;
@@ -270,12 +254,35 @@ int get_error_for_char(int x7, int y7, unsigned char proposed_char, int fg, int 
 	return error;
 }
 
+// Functions - get_error_for_char(int x7, int y7, unsigned char code, int fg, int bg, unsigned char hold_char)
+int get_error_for_char(int x7, int y7, unsigned char proposed_char, int fg, int bg, bool hold_mode, unsigned char last_gfx_char)
+{
+	// If proposed character >= 128 then this is a control code
+	// If so then the hold char will be displayed on screen
+	// Otherwise it will be our proposed character (pixels)
+
+	unsigned char screen_char;
+
+	if (hold_mode)
+	{
+		screen_char = (proposed_char >= 128) ? last_gfx_char : proposed_char;
+	}
+	else
+	{
+		screen_char = (proposed_char >= 128) ? MODE7_BLANK : proposed_char;
+	}
+
+	return get_error_for_screen_char(x7, y7, screen_char, fg, bg);
+}
+
 unsigned char get_graphic_char_from_image(int x7, int y7, int fg, int bg)
 {
-	unsigned char current_char = mode7[(y7 * MODE7_WIDTH) + (x7)];
+#if 0
 	int x = IMAGE_X_FROM_X7(x7);
 	int y = IMAGE_Y_FROM_Y7(y7);
+
 	unsigned char graphic_char = 0;
+	unsigned char current_char = mode7[(y7 * MODE7_WIDTH) + (x7)];
 
 	if (current_char != MODE7_BLANK)
 	{
@@ -296,6 +303,31 @@ unsigned char get_graphic_char_from_image(int x7, int y7, int fg, int bg)
 	}
 
 	return graphic_char;
+#else
+	// Try every possible combination of pixels to get lowest error
+
+	int min_error = INT_MAX;
+	unsigned char min_char = 0;
+
+	for (int i = 0; i < 64; i++)
+	{
+		unsigned char screen_char = (MODE7_BLANK) | (i & 0x1f) | ((i & 0x20) << 1);
+
+	//	printf("0x%x ", screen_char);
+
+		int error = get_error_for_screen_char(x7, y7, screen_char, fg, bg);
+
+		if (error < min_error)
+		{
+			min_error = error;
+			min_char = screen_char;
+		}
+	}
+
+//	printf("\n");
+
+	return min_char;
+#endif
 }
 
 int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mode, unsigned char last_gfx_char)
@@ -752,6 +784,7 @@ int main(int argc, char **argv)
 	{
 		int y = IMAGE_Y_FROM_Y7(y7);
 
+#if 0
 		for(int x7 = FRAME_FIRST_COLUMN; x7 < (FRAME_FIRST_COLUMN + FRAME_WIDTH); x7++)
 		{
 			int x = IMAGE_X_FROM_X7(x7);
@@ -766,6 +799,7 @@ int main(int argc, char **argv)
 
 			x++;
 		}
+#endif
 
 		// Here we have:
 		// pixel data turned into graphic characters in mode7 array - actually just an indication if pixels in cell
