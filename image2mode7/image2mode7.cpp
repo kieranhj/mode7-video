@@ -310,7 +310,7 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mo
 
 	//	printf("get_error_for_remainder_of_line(%d, %d, %d, %d, %d, %d)\n", x7, y7, fg, bg, hold_char, prev_char);
 
-	unsigned char graphic_char = get_graphic_char_from_image(x7, y7, fg, bg);
+//	unsigned char graphic_char = get_graphic_char_from_image(x7, y7, fg, bg);
 	int lowest_error = INT_MAX;
 	unsigned char lowest_char = 'Z';
 
@@ -328,24 +328,28 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mo
 	// Release graphics- TODO
 
 	// If we have a graphic character or blank we could use this!
-	if (graphic_char == MODE7_BLANK)
+	for (unsigned char hibit = 0; hibit < 128; hibit += 64)
 	{
-		int newstate = GET_STATE(fg, bg, hold_mode, graphic_char);
-		int error = get_error_for_char(x7, y7, graphic_char, fg, bg, hold_mode, graphic_char);
-		int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_mode, graphic_char);
-
-		if (total_error_in_state[newstate][x7 + 1] == -1)
+		for (unsigned char lobits = 32; lobits < 64; lobits++)
 		{
-			total_error_in_state[newstate][x7 + 1] = remaining;
-			char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
-		}
+			unsigned char graphic_char = hibit | lobits;
+			int newstate = GET_STATE(fg, bg, hold_mode, graphic_char);
+			int error = get_error_for_char(x7, y7, graphic_char, fg, bg, hold_mode, graphic_char);
+			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_mode, graphic_char);
 
-		error += remaining;
+			if (total_error_in_state[newstate][x7 + 1] == -1)
+			{
+				total_error_in_state[newstate][x7 + 1] = remaining;
+				char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
+			}
 
-		if (error < lowest_error)
-		{
-			lowest_error = error;
-			lowest_char = graphic_char;
+			error += remaining;
+
+			if (error < lowest_error)
+			{
+				lowest_error = error;
+				lowest_char = graphic_char;
+			}
 		}
 	}
 
@@ -473,6 +477,7 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mo
 		}
 	}
 
+	/*
 	if (graphic_char != MODE7_BLANK)
 	{
 		int newstate = GET_STATE(fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK);
@@ -493,6 +498,7 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mo
 			lowest_char = graphic_char;
 		}
 	}
+	*/
 
 	//	printf("(%d, %d) returning char=%d lowest error=%d\n", x7, y7, lowest_char, lowest_error);
 
