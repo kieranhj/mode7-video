@@ -173,12 +173,50 @@ unsigned char pixel_to_grey(int mode, unsigned char r, unsigned char g, unsigned
 // "Better" means that the "error" for the rest of the line (appearance on screen vs actual image = deviation) is minimised
 
 // Hold graphics mode means use last known (used on the line) graphic character in place of space when emitting a control code (reset if using alphanumerics not graphics)
+// Palette order = black - red - green - yellow - blue - magenta - cyan - white
+// Brightness order = black - blue - red - magenta - green - cyan - yellow - white
+// Hue order = red - yellow - green - cyan - blue - magenta - red
+
+// Luma values
+// B = 0 ~= 0
+// B = 18 = 18 ~= 1x
+// R = 54 = 18 + 36 ~= 3x
+// M = 73 = 18 + 36 + 19 ~= 4x
+// G = 182 = 18 + 36 + 19 + 109 ~= 10x
+// C = 201 = 18 + 36 + 19 + 109 + 19 ~= 11x
+// Y = 237 = 18 + 36 + 19 + 109 + 19 + 36 ~= 13x
+// W = 255 = 18 + 36 + 19 + 109 + 19 + 36 + 18 ~= 14x
+
+static int error_colour_vs_colour[8][8] = {
+
+#if 0		// This maps error to luma when comparing colours against black/white
+	{ 0, 3, 10, 13, 1, 4, 11, 14 },		// black
+	{ 3, 0, 8, 4, 8, 4, 12, 11 },		// red
+	{ 10, 8, 0, 4, 8, 12, 4, 4 },		// green
+	{ 13, 4, 4, 0, 12, 8, 8, 1 },		// yellow
+	{ 1, 8, 8, 12, 0, 4, 4, 13 },		// blue
+	{ 4, 4, 12, 8, 4, 0, 8, 10 },		// magenta
+	{ 11, 12, 4, 8, 4, 8, 0, 3 },		// cyan
+	{ 14, 11, 4, 1, 13, 10, 3, 0 },		// white
+#else		// This maps colours in brightness order when comparing against black/white
+	{ 0, 2, 4, 6, 1, 3, 5, 7 },		// black
+	{ 2, 0, 4, 2, 4, 2, 6, 5 },		// red
+	{ 4, 4, 0, 2, 4, 6, 2, 3 },		// green
+	{ 6, 2, 2, 0, 6, 4, 4, 1 },		// yellow
+	{ 1, 4, 4, 6, 0, 2, 2, 6 },		// blue
+	{ 3, 2, 6, 4, 2, 0, 4, 4 },		// magenta
+	{ 5, 6, 2, 4, 2, 4, 0, 2 },		// cyan
+	{ 7, 5, 3, 1, 6, 4, 2, 0 },		// white
+#endif
+};
 
 int get_error_for_screen_char(int x7, int y7, unsigned char screen_char, int fg, int bg)
 {
 	int x = IMAGE_X_FROM_X7(x7);
 	int y = IMAGE_Y_FROM_Y7(y7);
 	int error = 0;
+
+	int screen_c, image_c, error_c;
 
 	unsigned char screen_r, screen_g, screen_b;
 	unsigned char image_r, image_g, image_b;
@@ -197,7 +235,8 @@ int get_error_for_screen_char(int x7, int y7, unsigned char screen_char, int fg,
 
 	// Calculate the error between them
 
-	error += ((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b));
+	//	error += (((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b))) / (255 * 255);
+	error += error_colour_vs_colour[get_colour_from_rgb(screen_r, screen_g, screen_b)][get_colour_from_rgb(image_r, image_g, image_b)];
 
 	screen_r = screen_char & 2 ? GET_RED_FROM_COLOUR(fg) : GET_RED_FROM_COLOUR(bg);
 	screen_g = screen_char & 2 ? GET_GREEN_FROM_COLOUR(fg) : GET_GREEN_FROM_COLOUR(bg);
@@ -207,7 +246,8 @@ int get_error_for_screen_char(int x7, int y7, unsigned char screen_char, int fg,
 	image_g = src(x + 1, y, 1);
 	image_b = src(x + 1, y, 2);
 
-	error += ((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b));
+	//	error += (((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b))) / (255 * 255);
+	error += error_colour_vs_colour[get_colour_from_rgb(screen_r, screen_g, screen_b)][get_colour_from_rgb(image_r, image_g, image_b)];
 
 	screen_r = screen_char & 4 ? GET_RED_FROM_COLOUR(fg) : GET_RED_FROM_COLOUR(bg);
 	screen_g = screen_char & 4 ? GET_GREEN_FROM_COLOUR(fg) : GET_GREEN_FROM_COLOUR(bg);
@@ -217,7 +257,8 @@ int get_error_for_screen_char(int x7, int y7, unsigned char screen_char, int fg,
 	image_g = src(x, y + 1, 1);
 	image_b = src(x, y + 1, 2);
 
-	error += ((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b));
+	//	error += (((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b))) / (255 * 255);
+	error += error_colour_vs_colour[get_colour_from_rgb(screen_r, screen_g, screen_b)][get_colour_from_rgb(image_r, image_g, image_b)];
 
 	screen_r = screen_char & 8 ? GET_RED_FROM_COLOUR(fg) : GET_RED_FROM_COLOUR(bg);
 	screen_g = screen_char & 8 ? GET_GREEN_FROM_COLOUR(fg) : GET_GREEN_FROM_COLOUR(bg);
@@ -227,7 +268,8 @@ int get_error_for_screen_char(int x7, int y7, unsigned char screen_char, int fg,
 	image_g = src(x + 1, y + 1, 1);
 	image_b = src(x + 1, y + 1, 2);
 
-	error += ((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b));
+	//	error += (((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b))) / (255 * 255);
+	error += error_colour_vs_colour[get_colour_from_rgb(screen_r, screen_g, screen_b)][get_colour_from_rgb(image_r, image_g, image_b)];
 
 	screen_r = screen_char & 16 ? GET_RED_FROM_COLOUR(fg) : GET_RED_FROM_COLOUR(bg);
 	screen_g = screen_char & 16 ? GET_GREEN_FROM_COLOUR(fg) : GET_GREEN_FROM_COLOUR(bg);
@@ -237,7 +279,8 @@ int get_error_for_screen_char(int x7, int y7, unsigned char screen_char, int fg,
 	image_g = src(x, y + 2, 1);
 	image_b = src(x, y + 2, 2);
 
-	error += ((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b));
+	//	error += (((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b))) / (255 * 255);
+	error += error_colour_vs_colour[get_colour_from_rgb(screen_r, screen_g, screen_b)][get_colour_from_rgb(image_r, image_g, image_b)];
 
 	screen_r = screen_char & 64 ? GET_RED_FROM_COLOUR(fg) : GET_RED_FROM_COLOUR(bg);
 	screen_g = screen_char & 64 ? GET_GREEN_FROM_COLOUR(fg) : GET_GREEN_FROM_COLOUR(bg);
@@ -247,7 +290,8 @@ int get_error_for_screen_char(int x7, int y7, unsigned char screen_char, int fg,
 	image_g = src(x + 1, y + 2, 1);
 	image_b = src(x + 1, y + 2, 2);
 
-	error += ((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b));
+	//	error += (((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b))) / (255 * 255);
+	error += error_colour_vs_colour[get_colour_from_rgb(screen_r, screen_g, screen_b)][get_colour_from_rgb(image_r, image_g, image_b)];
 
 	// For all six pixels in the character cell
 
@@ -290,7 +334,8 @@ unsigned char get_graphic_char_from_image(int x7, int y7, int fg, int bg)
 		// Calculate graphic character - if pixel == bg colour then off else on
 
 		graphic_char = 32 +																										// bit 5 always set!
-			+ (get_colour_from_rgb(src(x, y, 0),		 src(x, y, 1),			src(x, y, 2))			== bg ? 0 : 1)			// (x,y) = bit 0
+			
+			(get_colour_from_rgb(src(x, y, 0),		 src(x, y, 1),			src(x, y, 2))			== bg ? 0 : 1)			// (x,y) = bit 0
 			+ (get_colour_from_rgb(src(x + 1, y, 0),	 src(x + 1, y, 1),		src(x + 1, y, 2))		== bg ? 0 : 2)			// (x+1,y) = bit 1
 			+ (get_colour_from_rgb(src(x, y + 1, 0),	 src(x, y + 1, 1),		src(x, y + 1, 2))		== bg ? 0 : 4)			// (x,y+1) = bit 2
 			+ (get_colour_from_rgb(src(x + 1, y + 1, 0), src(x + 1, y + 1, 1),	src(x + 1, y + 1, 2))	== bg ? 0 : 8)			// (x+1,y+1) = bit 3
@@ -309,11 +354,30 @@ unsigned char get_graphic_char_from_image(int x7, int y7, int fg, int bg)
 	int min_error = INT_MAX;
 	unsigned char min_char = 0;
 
+	int x = IMAGE_X_FROM_X7(x7);
+	int y = IMAGE_Y_FROM_Y7(y7);
+
+	// This is our default graphics character
+	// All pixels matching background are background
+	// All other pixels are foreground
+
+	min_char = 32 +																										// bit 5 always set!
+			+(get_colour_from_rgb(src(x, y, 0), src(x, y, 1), src(x, y, 2)) == bg ? 0 : 1)			// (x,y) = bit 0
+			+ (get_colour_from_rgb(src(x + 1, y, 0), src(x + 1, y, 1), src(x + 1, y, 2)) == bg ? 0 : 2)			// (x+1,y) = bit 1
+			+ (get_colour_from_rgb(src(x, y + 1, 0), src(x, y + 1, 1), src(x, y + 1, 2)) == bg ? 0 : 4)			// (x,y+1) = bit 2
+			+ (get_colour_from_rgb(src(x + 1, y + 1, 0), src(x + 1, y + 1, 1), src(x + 1, y + 1, 2)) == bg ? 0 : 8)			// (x+1,y+1) = bit 3
+			+ (get_colour_from_rgb(src(x, y + 2, 0), src(x, y + 2, 1), src(x, y + 2, 2)) == bg ? 0 : 16)			// (x,y+2) = bit 4
+			+ (get_colour_from_rgb(src(x + 1, y + 2, 0), src(x + 1, y + 2, 1), src(x + 1, y + 2, 2)) == bg ? 0 : 64);		// (x+1,y+2) = bit 6
+
+	// Calculate error for this character
+
+	min_error = get_error_for_screen_char(x7, y7, min_char, fg, bg);
+
+	// See if there's a better character by trying all 64 possible combinations
+
 	for (int i = 0; i < 64; i++)
 	{
 		unsigned char screen_char = (MODE7_BLANK) | (i & 0x1f) | ((i & 0x20) << 1);
-
-	//	printf("0x%x ", screen_char);
 
 		int error = get_error_for_screen_char(x7, y7, screen_char, fg, bg);
 
@@ -323,8 +387,6 @@ unsigned char get_graphic_char_from_image(int x7, int y7, int fg, int bg)
 			min_char = screen_char;
 		}
 	}
-
-//	printf("\n");
 
 	return min_char;
 #endif
@@ -356,8 +418,8 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mo
 	// Set graphic colour (colour != fg) - 6
 	// Fill (if bg != fg)
 	// No fill (if bg != 0)
-	// Hold graphics - TODO
-	// Release graphics- TODO
+	// Hold graphics (if hold_mode == false)
+	// Release graphics (if hold_mode == true)
 
 	// If we have a graphic character or blank we could use this!
 	if (graphic_char == MODE7_BLANK)
@@ -841,11 +903,21 @@ int main(int argc, char **argv)
 		// This is our initial state of the line
 		int state = GET_STATE(min_colour, 0, false, MODE7_BLANK);
 
+		if (verbose)
+		{
+			printf("Row %d: best start colour = %d\n", y7, min_colour);
+		}
+
 		// Set this state before frame begins
 		mode7[(y7 * MODE7_WIDTH) + (FRAME_FIRST_COLUMN - 1)] = MODE7_GFX_COLOUR + min_colour;
 
 		// Kick off recursive error calculation with that state
 		int error = get_error_for_remainder_of_line(FRAME_FIRST_COLUMN, y7, min_colour, 0, false, MODE7_BLANK);
+
+		if (verbose)
+		{
+			printf("Row %d: total error for line = %d\n", y7, error);
+		}
 
 		// Store first character
 		char_for_xpos_in_state[state][FRAME_FIRST_COLUMN] = output[FRAME_FIRST_COLUMN];
