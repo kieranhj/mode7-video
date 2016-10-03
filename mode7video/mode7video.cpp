@@ -13,13 +13,14 @@ using namespace cimg_library;
 #define MODE7_HEIGHT		25
 #define MODE7_MAX_SIZE		(MODE7_WIDTH * MODE7_HEIGHT)
 
+#define MODE7_GFX_COLOUR	144
+
+#define MODE7_CONTIG_GFX	153
+#define MODE7_SEP_GFX		154
 #define MODE7_BLACK_BG		156
 #define MODE7_NEW_BG		157
 #define MODE7_HOLD_GFX		158
 #define MODE7_RELEASE_GFX	159
-#define MODE7_GFX_COLOUR	144
-#define MODE7_CONTIG_GFX	153
-#define MODE7_SEP_GFX		154
 
 #define IMAGE_W				(src._width)
 #define IMAGE_H				(src._height)
@@ -54,7 +55,7 @@ using namespace cimg_library;
 #define LO(a)				((a) % 256)
 #define HI(a)				((a) / 256)
 
-#define _USE_16_BIT_PACK	FALSE
+#define _USE_16_BIT_PACK	TRUE
 
 #if _USE_16_BIT_PACK
 #define BYTES_PER_DELTA		2
@@ -76,7 +77,6 @@ static bool global_use_fill = true;
 static bool global_use_sep = true;
 static bool global_use_geometric = true;
 static bool global_try_all = false;
-static bool global_use_first = false;
 
 static int global_sep_fg_factor = 128;
 
@@ -340,48 +340,39 @@ int get_error_for_char(int x7, int y7, unsigned char proposed_char, int fg, int 
 
 unsigned char get_graphic_char_from_image(int x7, int y7, int fg, int bg, bool sep)
 {
-	// Try every possible combination of pixels to get lowest error
-
 	int min_error = INT_MAX;
-	unsigned char min_char = 0;
+	int on_error, off_error;
+	unsigned char min_char = 32;
+	unsigned char direct_char = 0;
 
 	int x = IMAGE_X_FROM_X7(x7);
 	int y = IMAGE_Y_FROM_Y7(y7);
 
-	// This is our default graphics character
-	// All pixels matching background are background
-	// All other pixels are foreground
-	// NB. this only works with -quant
+	// Try every possible combination of pixels to get lowest error
 
-	min_char = 32 +																										// bit 5 always set!
-		+(get_colour_from_rgb(src(x, y, 0), src(x, y, 1), src(x, y, 2)) == bg ? 0 : 1)								// (x,y) = bit 0
-		+ (get_colour_from_rgb(src(x + 1, y, 0), src(x + 1, y, 1), src(x + 1, y, 2)) == bg ? 0 : 2)					// (x+1,y) = bit 1
-		+ (get_colour_from_rgb(src(x, y + 1, 0), src(x, y + 1, 1), src(x, y + 1, 2)) == bg ? 0 : 4)					// (x,y+1) = bit 2
-		+ (get_colour_from_rgb(src(x + 1, y + 1, 0), src(x + 1, y + 1, 1), src(x + 1, y + 1, 2)) == bg ? 0 : 8)		// (x+1,y+1) = bit 3
-		+ (get_colour_from_rgb(src(x, y + 2, 0), src(x, y + 2, 1), src(x, y + 2, 2)) == bg ? 0 : 16)				// (x,y+2) = bit 4
-		+ (get_colour_from_rgb(src(x + 1, y + 2, 0), src(x + 1, y + 2, 1), src(x + 1, y + 2, 2)) == bg ? 0 : 64);	// (x+1,y+2) = bit 6
+	on_error = get_error_for_screen_pixel(x, y, 1, fg, bg, sep);
+	off_error = get_error_for_screen_pixel(x, y, 0, fg, bg, sep);
+	min_char += (on_error < off_error ? 1 : 0);
 
-																													// Calculate error for this character
+	on_error = get_error_for_screen_pixel(x + 1, y, 1, fg, bg, sep);
+	off_error = get_error_for_screen_pixel(x + 1, y, 0, fg, bg, sep);
+	min_char += (on_error < off_error ? 2 : 0);
 
-	min_error = get_error_for_screen_char(x7, y7, min_char, fg, bg, sep);
+	on_error = get_error_for_screen_pixel(x, y + 1, 1, fg, bg, sep);
+	off_error = get_error_for_screen_pixel(x, y + 1, 0, fg, bg, sep);
+	min_char += (on_error < off_error ? 4 : 0);
 
-	// See if there's a better character by trying all 64 possible combinations
+	on_error = get_error_for_screen_pixel(x + 1, y + 1, 1, fg, bg, sep);
+	off_error = get_error_for_screen_pixel(x + 1, y + 1, 0, fg, bg, sep);
+	min_char += (on_error < off_error ? 8 : 0);
 
-	if (!global_use_first)
-	{
-		for (int i = 1; i < 64; i++)
-		{
-			unsigned char screen_char = (MODE7_BLANK) | (i & 0x1f) | ((i & 0x20) << 1);
+	on_error = get_error_for_screen_pixel(x, y + 2, 1, fg, bg, sep);
+	off_error = get_error_for_screen_pixel(x, y + 2, 0, fg, bg, sep);
+	min_char += (on_error < off_error ? 16 : 0);
 
-			int error = get_error_for_screen_char(x7, y7, screen_char, fg, bg, sep);
-
-			if (error < min_error)
-			{
-				min_error = error;
-				min_char = screen_char;
-			}
-		}
-	}
+	on_error = get_error_for_screen_pixel(x + 1, y + 2, 1, fg, bg, sep);
+	off_error = get_error_for_screen_pixel(x + 1, y + 2, 0, fg, bg, sep);
+	min_char += (on_error < off_error ? 64 : 0);
 
 	return min_char;
 }
@@ -717,7 +708,6 @@ int main(int argc, char **argv)
 	const bool url = cimg_option("-url", false, "Spit out URL for edit.tf");
 	const bool error_lookup = cimg_option("-lookup", false, "Use lookup table for colour error (default is geometric distance)");
 	const bool try_all = cimg_option("-slow", false, "Calculate full line error for every possible graphics character (64x slower)");
-	const bool use_first = cimg_option("-fast", false, "Use the first graphic character match (faster)");
 
 	if (cimg_option("-h", false, 0)) std::exit(0);
 	if (shortname == NULL)  std::exit(0);
@@ -729,12 +719,6 @@ int main(int argc, char **argv)
 
 	global_use_geometric = !error_lookup;
 	global_try_all = try_all;
-	global_use_first = use_first;
-
-	if (use_first)
-	{
-		use_quant = true;
-	}
 
 	char filename[256];
 	char input[256];
@@ -743,6 +727,7 @@ int main(int argc, char **argv)
 	int totalbytes = 0;
 	int maxdeltas = 0;
 	int resetframes = 0;
+	int skipdeltas = 0;
 
 	unsigned char *beeb = (unsigned char *) malloc(MODE7_MAX_SIZE * NUM_FRAMES);
 	unsigned char *ptr = beeb;
@@ -1142,7 +1127,7 @@ int main(int argc, char **argv)
 		}
 		else
 		{
-			numdeltabytes = numdeltas * BYTES_PER_DELTA;
+			unsigned char *numdeltas_ptr = ptr;
 
 			*ptr++ = LO(numdeltas);
 			*ptr++ = HI(numdeltas);
@@ -1156,10 +1141,64 @@ int main(int argc, char **argv)
 					unsigned char byte = mode7[i];			//  ^ prevmode7[i] for EOR with prev.
 
 #if _USE_16_BIT_PACK
-					unsigned short pack = byte & 31;		// remove bits 5 & 6
+					unsigned short offset = (i - previ);		// could be up to 10 bits
+					unsigned char data = 0;
+					unsigned char flag = 1;
 
-					pack |= (byte & 64) >> 1;				// shift bit 6 down
-					pack = (i - previ) + (pack << 10);						// shift whole thing up 10 bits and add offset
+					if (byte < 128)
+					{
+						// Graphics character
+
+						flag = 0;										// bit 9 is our control code flag
+						data = (byte & 31) | ((byte & 64) >> 1);		// mask out bit 5, shift down bit 6
+					}
+					else if (byte > MODE7_GFX_COLOUR && byte < MODE7_GFX_COLOUR + 8)
+					{
+						// Colour code
+						unsigned char code = 1;				// code 1 = colour
+						unsigned char colour = byte - MODE7_GFX_COLOUR;
+
+						data = (colour << 3) | code;
+					}
+					else if (byte >= MODE7_CONTIG_GFX && byte < 160)
+					{
+						unsigned char code = 2;				// code 2 = control
+						unsigned char control = byte - MODE7_CONTIG_GFX - 1;
+
+						data = (control << 3) | code;
+					}
+
+					// Check if offset is 10-bits!
+
+					if (offset > 0x1ff)
+					{
+						// Insert a control code to skip offset 511
+
+						if (verbose)
+						{
+							printf("*SKIP* (%x) ", ptr - beeb);					// NEED TO GO BACK AND UPDATE #DELTAS IN STREAM ABOVE!
+						}
+
+						// This control code does nothing
+
+						unsigned short skip = (0 < 10) | (1 << 9) | (0x1ff);
+						*ptr++ = LO(skip);
+						*ptr++ = HI(skip);
+
+						// But does reduce our offset to 9-bits
+
+						offset -= 0x1ff;
+
+						// We added a delta
+						numdeltas++;
+
+						// Remember how many skips
+						skipdeltas++;
+					}
+
+					// Pack our delta value into 16-bits
+
+					unsigned short pack = (data << 10) | (flag << 9) | (offset);
 
 					*ptr++ = LO(pack);
 					*ptr++ = HI(pack);
@@ -1173,6 +1212,13 @@ int main(int argc, char **argv)
 					previ = i;								// or 0 for offset from screen start
 				}
 			}
+
+			// Poke the updated numdeltas value into our stream
+			*numdeltas_ptr++ = LO(numdeltas);
+			*numdeltas_ptr++ = HI(numdeltas);
+
+			// Calculate number of bytes
+			numdeltabytes = numdeltas * BYTES_PER_DELTA;
 		}
 
 		if (verbose)
@@ -1250,6 +1296,7 @@ int main(int argc, char **argv)
 	printf("total bytes = %d\n", totalbytes);
 	printf("max deltas = %d\n", maxdeltas);
 	printf("reset frames = %d\n", resetframes);
+	printf("skip deltas = %d\n", skipdeltas);
 	printf("deltas / frame = %f\n", totaldeltas / (float)total_frames);
 	printf("bytes / frame = %f\n", totalbytes / (float)total_frames);
 	printf("bytes / second = %f\n", 25.0f * totalbytes / (float)total_frames);

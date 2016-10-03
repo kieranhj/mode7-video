@@ -41,6 +41,7 @@ _ENABLE_WALLCLOCK = TRUE
 _COUNT_DECRUNCHES = FALSE
 _TRY_TO_MATCH_FRAMERATE = FALSE
 _CHECK_LOAD_BUFFER = FALSE
+_USE_16_BIT_PACK = TRUE
 
 \ ******************************************************************
 \ *	Define macros
@@ -597,8 +598,10 @@ ENDIF
 	STA writeptr
 
 	LDA packed_delta+1
+IF _USE_16_BIT_PACK
 ; No need to do this with COLOUR
-;	AND #&3						; only need bottom 2 bits
+	AND #&1						; only need bottom 1 bit (9-bit offset in colour scheme)
+ENDIF
 	ADC writeptr+1
 	STA writeptr+1
 
@@ -607,7 +610,43 @@ ENDIF
 	\\ 0X01 1111
 	\\ 0X11 1111
 
-IF 0	; No need to do this with COLOUR
+IF _USE_16_BIT_PACK	; No need to do this with COLOUR
+	LDA packed_delta+1
+	AND #&2						; control code flag
+	BEQ decode_gfx_char
+
+	LDA packed_delta+1
+	AND #&E0					; top 3 bits are control data
+	LSR A: LSR A: LSR A: LSR A: LSR A
+	STA shifted_bit				; temp storage
+
+	\\ This is a control code not a graphics char
+	LDA packed_delta+1
+	AND #&1C					; control code
+
+	\\ Zero just means continue
+	BEQ skip_screen_write		; 0 = skip write (to enable 10-bit offset)
+
+	CMP #&04					; (1 << 2) = colour
+	BNE not_colour_code
+
+	\\ Colour code
+	CLC
+	LDA shifted_bit
+	ADC #144					; turn control code data into colour character
+	BNE write_to_screen			; always taken
+
+	.not_colour_code
+	CMP #&08					; (2 << 2) = control char
+	BNE skip_screen_write		; we don't know what this is!
+
+	\\ Control code
+	CLC
+	LDA shifted_bit
+	ADC #152					; turn control code data into background character
+	BNE write_to_screen			; always taken
+
+	.decode_gfx_char
 	LDA packed_delta+1
 	AND #128					; top bit 7
 	LSR A						; shift down to bit 6
@@ -624,9 +663,11 @@ ELSE
 ENDIF
 
 	\\ Write to screen! (do this without indirect write?)
+	.write_to_screen
 	LDY #0
 	STA (writeptr),Y
 
+	.skip_screen_write
 	\\ Decrement delta count
 	SEC
 	LDA num_deltas
