@@ -616,7 +616,7 @@ IF _USE_16_BIT_PACK	; No need to do this with COLOUR
 	BEQ decode_gfx_char
 
 	LDA packed_delta+1
-	AND #&E0					; top 3 bits are control data
+	AND #&E0					; top 3 bits are data
 	LSR A: LSR A: LSR A: LSR A: LSR A
 	STA shifted_bit				; temp storage
 

@@ -1163,7 +1163,7 @@ int main(int argc, char **argv)
 					else if (byte >= MODE7_CONTIG_GFX && byte < 160)
 					{
 						unsigned char code = 2;				// code 2 = control
-						unsigned char control = byte - MODE7_CONTIG_GFX - 1;
+						unsigned char control = byte - (MODE7_CONTIG_GFX - 1);
 
 						data = (control << 3) | code;
 					}
