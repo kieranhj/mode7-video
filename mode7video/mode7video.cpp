@@ -55,6 +55,9 @@ using namespace cimg_library;
 #define LO(a)				((a) % 256)
 #define HI(a)				((a) / 256)
 
+#define SAFE_SRC(x,y,c)		(((x)<0||(x)>=src._width)?0:(((y)<0||(y)>=src._height)?0:(src((x),(y),(c)))))
+//#define SAFE_SRC(x,y,c)		(((x)<0||(x)>=src._width)?0:(((y)<0||(y)>=src._height)?0:(src((x),(y),(0)))))
+
 #define _USE_16_BIT_PACK	TRUE
 
 #if _USE_16_BIT_PACK
@@ -284,9 +287,9 @@ int get_error_for_screen_pixel(int x, int y, int screen_bit, int fg, int bg, boo
 
 	// These are the pixels in the image
 
-	image_r = src(x, y, 0);
-	image_g = src(x, y, 1);
-	image_b = src(x, y, 2);
+	image_r = SAFE_SRC(x, y, 0);
+	image_g = SAFE_SRC(x, y, 1);
+	image_b = SAFE_SRC(x, y, 2);
 
 	// Calculate the error between them
 
@@ -801,9 +804,9 @@ int main(int argc, char **argv)
 
 			cimg_forXY(src, x, y)
 			{
-				unsigned char R = src(x, y, 0);
-				unsigned char G = src(x, y, 1);
-				unsigned char B = src(x, y, 2);
+				unsigned char R = SAFE_SRC(x, y, 0);
+				unsigned char G = SAFE_SRC(x, y, 1);
+				unsigned char B = SAFE_SRC(x, y, 2);
 
 				unsigned char r, g, b;
 				r = g = b = 0;
