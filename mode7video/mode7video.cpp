@@ -6,46 +6,29 @@
 
 using namespace cimg_library;
 
-#define MODE7_COL0			151
-#define MODE7_COL1			(sep ? MODE7_SEP_GFX : 32)
-#define MODE7_BLANK			32
-#define MODE7_WIDTH			40
-#define MODE7_HEIGHT		25
-#define MODE7_MAX_SIZE		(MODE7_WIDTH * MODE7_HEIGHT)
-
-#define MODE7_GFX_COLOUR	144
-
-#define MODE7_CONTIG_GFX	153
-#define MODE7_SEP_GFX		154
-#define MODE7_BLACK_BG		156
-#define MODE7_NEW_BG		157
-#define MODE7_HOLD_GFX		158
-#define MODE7_RELEASE_GFX	159
+#define SCREEN_W			32
+#define SCREEN_H			32
 
 #define IMAGE_W				(src._width)
 #define IMAGE_H				(src._height)
 
-#define MODE7_PIXEL_W		78
-#define MODE7_PIXEL_H		75
+#define PIXEL_W				64
+#define PIXEL_H				32
 
 #define FRAME_WIDTH			(frame_width)
 #define FRAME_HEIGHT		(frame_height)
 
 #define NUM_FRAMES			frames			// 5367		// 5478
-#define FRAME_SIZE			(MODE7_WIDTH * FRAME_HEIGHT)
+#define FRAME_SIZE			(SCREEN_W * FRAME_HEIGHT)
 
-#define FRAME_FIRST_COLUMN	1				// (MODE7_WIDTH - FRAME_WIDTH)
+#define BYTES_PER_DELTA		3
+
+#define SCREEN_MAX_SIZE		(SCREEN_W * SCREEN_H)
 
 #define FILENAME			shortname
 #define DIRECTORY			shortname
 
 #define _ZERO_FRAME_PRESET	FALSE		// whether our zero frame is already setup for MODE 7
-
-#define MAX_STATE			(1U << 15)
-#define GET_STATE(fg,bg,hold_mode,last_gfx_char,sep)	( (sep) << 14 | (last_gfx_char) << 7 | (hold_mode) << 6 | ((bg) << 3) | (fg))
-
-#define IMAGE_X_FROM_X7(x7)	(((x7) - FRAME_FIRST_COLUMN) * 2)
-#define IMAGE_Y_FROM_Y7(x7)	((y7) * 3)
 
 #define MAX_3(A,B,C)		((A)>(B)?((A)>(C)?(A):(C)):(B)>(C)?(B):(C))
 #define MIN_3(A,B,C)		((A)<(B)?((A)<(C)?(A):(C)):(B)<(C)?(B):(C))
@@ -58,112 +41,15 @@ using namespace cimg_library;
 #define SAFE_SRC(x,y,c)		(((x)<0||(x)>=src._width)?0:(((y)<0||(y)>=src._height)?0:(src((x),(y),(c)))))
 //#define SAFE_SRC(x,y,c)		(((x)<0||(x)>=src._width)?0:(((y)<0||(y)>=src._height)?0:(src((x),(y),(0)))))
 
-#define _USE_16_BIT_PACK	TRUE
-
-#if _USE_16_BIT_PACK
-#define BYTES_PER_DELTA		2
-#else
-#define BYTES_PER_DELTA		3
-#endif
-
 static CImg<unsigned char> src;
-static unsigned char mode7[MODE7_MAX_SIZE];
-static unsigned char prevmode7[MODE7_MAX_SIZE];
-static unsigned char delta[MODE7_MAX_SIZE];
+static unsigned char mode7[SCREEN_MAX_SIZE];
+static unsigned char prevmode7[SCREEN_MAX_SIZE];
+static unsigned char delta[SCREEN_MAX_SIZE];
 
-static int total_error_in_state[MAX_STATE][MODE7_WIDTH + 1];
-static unsigned char char_for_xpos_in_state[MAX_STATE][MODE7_WIDTH + 1];
-static unsigned char output[MODE7_WIDTH];
-
-static bool global_use_hold = true;
-static bool global_use_fill = true;
-static bool global_use_sep = true;
 static bool global_use_geometric = true;
-static bool global_try_all = false;
-
-static int global_sep_fg_factor = 128;
 
 static int frame_width;
 static int frame_height;
-
-void clear_error_char_arrays(void)
-{
-	for (int state = 0; state < MAX_STATE; state++)
-	{
-		for (int x = 0; x <= MODE7_WIDTH; x++)
-		{
-			total_error_in_state[state][x] = -1;
-			char_for_xpos_in_state[state][x] = 'X';
-		}
-	}
-}
-
-int get_state_for_char(unsigned char proposed_char, int old_state)
-{
-	int fg = old_state & 7;
-	int bg = (old_state >> 3) & 7;
-	int hold_mode = (old_state >> 6) & 1;
-	unsigned char last_gfx_char = (old_state >> 7) & 0x7f;
-	int sep = (old_state >> 14) & 1;
-
-	if (global_use_fill)
-	{
-		if (proposed_char == MODE7_NEW_BG)
-		{
-			bg = fg;
-		}
-
-		if (proposed_char == MODE7_BLACK_BG)
-		{
-			bg = 0;
-		}
-	}
-
-	if (proposed_char > MODE7_GFX_COLOUR && proposed_char < MODE7_GFX_COLOUR + 8)
-	{
-		fg = proposed_char - MODE7_GFX_COLOUR;
-	}
-
-	if (global_use_hold)
-	{
-		if (proposed_char == MODE7_HOLD_GFX)
-		{
-			hold_mode = true;
-		}
-
-		if (proposed_char == MODE7_RELEASE_GFX)
-		{
-			hold_mode = false;
-			last_gfx_char = MODE7_BLANK;
-		}
-
-		if (proposed_char < 128)
-		{
-			last_gfx_char = proposed_char;
-		}
-	}
-	else
-	{
-		hold_mode = false;
-		last_gfx_char = MODE7_BLANK;
-	}
-
-	if (global_use_sep)
-	{
-		if (proposed_char == MODE7_SEP_GFX)
-		{
-			sep = true;
-		}
-
-		if (proposed_char == MODE7_CONTIG_GFX)
-		{
-			sep = false;
-		}
-	}
-
-	return GET_STATE(fg, bg, hold_mode, last_gfx_char, sep);
-}
-
 
 int get_colour_from_rgb(unsigned char r, unsigned char g, unsigned char b)
 {
@@ -243,6 +129,14 @@ static int error_colour_vs_colour[8][8] = {
 #endif
 };
 
+static unsigned char left_pixel[16] = {
+	0x00,0x02,0x08,0x0A,0x20,0x22,0x28,0x2A,0x80,0x82,0x88,0x8A,0xA0,0xA2,0xA8,0xAA
+};
+
+static unsigned char right_pixel[16] = {
+	0x00,0x01,0x04,0x05,0x10,0x11,0x14,0x15,0x40,0x41,0x44,0x45,0x50,0x51,0x54,0x55
+};
+
 int error_function(int screen_r, int screen_g, int screen_b, int image_r, int image_g, int image_b)
 {
 	if (global_use_geometric)
@@ -254,411 +148,6 @@ int error_function(int screen_r, int screen_g, int screen_b, int image_r, int im
 		// Use lookup
 		return error_colour_vs_colour[get_colour_from_rgb(screen_r, screen_g, screen_b)][get_colour_from_rgb(image_r, image_g, image_b)];
 	}
-}
-
-int get_error_for_screen_pixel(int x, int y, int screen_bit, int fg, int bg, bool sep)
-{
-	int screen_r, screen_g, screen_b;
-	int image_r, image_g, image_b;
-
-	// These are the pixels that will get written to the screen
-
-	if (screen_bit)
-	{
-		if (sep)
-		{
-			screen_r = (global_sep_fg_factor * GET_RED_FROM_COLOUR(fg) + (255 - global_sep_fg_factor) * GET_RED_FROM_COLOUR(bg)) / 255;
-			screen_g = (global_sep_fg_factor * GET_GREEN_FROM_COLOUR(fg) + (255 - global_sep_fg_factor) * GET_GREEN_FROM_COLOUR(bg)) / 255;
-			screen_b = (global_sep_fg_factor * GET_BLUE_FROM_COLOUR(fg) + (255 - global_sep_fg_factor) * GET_BLUE_FROM_COLOUR(bg)) / 255;
-		}
-		else
-		{
-			screen_r = GET_RED_FROM_COLOUR(fg);
-			screen_g = GET_GREEN_FROM_COLOUR(fg);
-			screen_b = GET_BLUE_FROM_COLOUR(fg);
-		}
-	}
-	else
-	{
-		screen_r = GET_RED_FROM_COLOUR(bg);
-		screen_g = GET_GREEN_FROM_COLOUR(bg);
-		screen_b = GET_BLUE_FROM_COLOUR(bg);
-	}
-
-	// These are the pixels in the image
-
-	image_r = SAFE_SRC(x, y, 0);
-	image_g = SAFE_SRC(x, y, 1);
-	image_b = SAFE_SRC(x, y, 2);
-
-	// Calculate the error between them
-
-	return error_function(screen_r, screen_g, screen_b, image_r, image_g, image_b);
-}
-
-int get_error_for_screen_char(int x7, int y7, unsigned char screen_char, int fg, int bg, bool sep)
-{
-	int x = IMAGE_X_FROM_X7(x7);
-	int y = IMAGE_Y_FROM_Y7(y7);
-
-	int error = 0;
-
-	error += get_error_for_screen_pixel(x, y, screen_char & 1, fg, bg, sep);
-
-	error += get_error_for_screen_pixel(x + 1, y, screen_char & 2, fg, bg, sep);
-
-	error += get_error_for_screen_pixel(x, y + 1, screen_char & 4, fg, bg, sep);
-
-	error += get_error_for_screen_pixel(x + 1, y + 1, screen_char & 8, fg, bg, sep);
-
-	error += get_error_for_screen_pixel(x, y + 2, screen_char & 16, fg, bg, sep);
-
-	error += get_error_for_screen_pixel(x + 1, y + 2, screen_char & 64, fg, bg, sep);
-
-	// For all six pixels in the character cell
-
-	return error;
-}
-
-// Functions - get_error_for_char(int x7, int y7, unsigned char code, int fg, int bg, unsigned char hold_char)
-int get_error_for_char(int x7, int y7, unsigned char proposed_char, int fg, int bg, bool hold_mode, unsigned char last_gfx_char, bool sep)
-{
-	// If proposed character >= 128 then this is a control code
-	// If so then the hold char will be displayed on screen
-	// Otherwise it will be our proposed character (pixels)
-
-	unsigned char screen_char;
-
-	if (hold_mode)
-	{
-		screen_char = (proposed_char >= 128) ? last_gfx_char : proposed_char;
-	}
-	else
-	{
-		screen_char = (proposed_char >= 128) ? MODE7_BLANK : proposed_char;
-	}
-
-	return get_error_for_screen_char(x7, y7, screen_char, fg, bg, sep);
-}
-
-unsigned char get_graphic_char_from_image(int x7, int y7, int fg, int bg, bool sep)
-{
-	int min_error = INT_MAX;
-	int on_error, off_error;
-	unsigned char min_char = 32;
-	unsigned char direct_char = 0;
-
-	int x = IMAGE_X_FROM_X7(x7);
-	int y = IMAGE_Y_FROM_Y7(y7);
-
-	// Try every possible combination of pixels to get lowest error
-
-	on_error = get_error_for_screen_pixel(x, y, 1, fg, bg, sep);
-	off_error = get_error_for_screen_pixel(x, y, 0, fg, bg, sep);
-	min_char += (on_error < off_error ? 1 : 0);
-
-	on_error = get_error_for_screen_pixel(x + 1, y, 1, fg, bg, sep);
-	off_error = get_error_for_screen_pixel(x + 1, y, 0, fg, bg, sep);
-	min_char += (on_error < off_error ? 2 : 0);
-
-	on_error = get_error_for_screen_pixel(x, y + 1, 1, fg, bg, sep);
-	off_error = get_error_for_screen_pixel(x, y + 1, 0, fg, bg, sep);
-	min_char += (on_error < off_error ? 4 : 0);
-
-	on_error = get_error_for_screen_pixel(x + 1, y + 1, 1, fg, bg, sep);
-	off_error = get_error_for_screen_pixel(x + 1, y + 1, 0, fg, bg, sep);
-	min_char += (on_error < off_error ? 8 : 0);
-
-	on_error = get_error_for_screen_pixel(x, y + 2, 1, fg, bg, sep);
-	off_error = get_error_for_screen_pixel(x, y + 2, 0, fg, bg, sep);
-	min_char += (on_error < off_error ? 16 : 0);
-
-	on_error = get_error_for_screen_pixel(x + 1, y + 2, 1, fg, bg, sep);
-	off_error = get_error_for_screen_pixel(x + 1, y + 2, 0, fg, bg, sep);
-	min_char += (on_error < off_error ? 64 : 0);
-
-	return min_char;
-}
-
-int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mode, unsigned char last_gfx_char, bool sep)
-{
-	if (x7 >= MODE7_WIDTH)
-		return 0;
-
-	int state = GET_STATE(fg, bg, hold_mode, last_gfx_char, sep);
-
-	if (total_error_in_state[state][x7] != -1)
-		return total_error_in_state[state][x7];
-
-	//	printf("get_error_for_remainder_of_line(%d, %d, %d, %d, %d, %d)\n", x7, y7, fg, bg, hold_char, prev_char);
-
-	unsigned char graphic_char = global_try_all ? 'Y' : get_graphic_char_from_image(x7, y7, fg, bg, sep);
-	int lowest_error = INT_MAX;
-	unsigned char lowest_char = 'Z';
-
-	// Possible characters are: 1 + 1 + 6 + 1 + 1 + 1 + 1 = 12 possibilities x 40 columns = 12 ^ 40 combinations.  That's not going to work :)
-	// Possible states for a given cell: fg=0-7, bg=0-7, hold_gfx=6 pixels : total = 12 bits = 4096 possible states
-	// Wait! What about prev_char as part of state if want to use hold graphics feature? prev_char=6 pixels so actually 18 bits = 262144 possible states
-	// Not all of them can be visited as we cannot arbitrarily set the previous character or hold character but still needs a 40Mb array of ints! :S
-
-	// Graphic char (if set)
-	// Stay blank (if not)
-	// Set graphic colour (colour != fg) x6
-	// Fill (if bg != fg)
-	// No fill (if bg != 0)
-	// Hold graphics (if hold_mode == false)
-	// Release graphics (if hold_mode == true)
-
-	// Always try a blank first
-	if (MODE7_BLANK)
-	{
-		int newstate = GET_STATE(fg, bg, hold_mode, MODE7_BLANK, sep);
-		int error = get_error_for_char(x7, y7, MODE7_BLANK, fg, bg, hold_mode, MODE7_BLANK, sep);
-		int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_mode, MODE7_BLANK, sep);
-
-		if (total_error_in_state[newstate][x7 + 1] == -1)
-		{
-			total_error_in_state[newstate][x7 + 1] = remaining;
-			char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
-		}
-
-		error += remaining;
-
-		if (error < lowest_error)
-		{
-			lowest_error = error;
-			lowest_char = MODE7_BLANK;
-		}
-	}
-
-	// If the background is black we could enable fill! - you idiot - can enable fill at any time if fg colour has changed since last time!
-	if (global_use_fill)
-	{
-		if (bg != fg)
-		{
-			// Bg colour becomes fg colour immediately in this cell
-			int newstate = GET_STATE(fg, fg, hold_mode, last_gfx_char, sep);
-			int error = get_error_for_char(x7, y7, MODE7_NEW_BG, fg, fg, hold_mode, last_gfx_char, sep);
-			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, fg, hold_mode, last_gfx_char, sep);
-
-			if (total_error_in_state[newstate][x7 + 1] == -1)
-			{
-				total_error_in_state[newstate][x7 + 1] = remaining;
-				char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
-			}
-
-			error += remaining;
-
-			if (error < lowest_error)
-			{
-				lowest_error = error;
-				lowest_char = MODE7_NEW_BG;
-			}
-		}
-
-		// If the background is not black we could disable fill!
-		if (bg != 0)
-		{
-			// Bg colour becomes black immediately in this cell
-			int newstate = GET_STATE(fg, 0, hold_mode, last_gfx_char, sep);
-			int error = get_error_for_char(x7, y7, MODE7_BLACK_BG, fg, 0, hold_mode, last_gfx_char, sep);
-			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, 0, hold_mode, last_gfx_char, sep);
-
-			if (total_error_in_state[newstate][x7 + 1] == -1)
-			{
-				total_error_in_state[newstate][x7 + 1] = remaining;
-				char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
-			}
-
-			error += remaining;
-
-			if (error < lowest_error)
-			{
-				lowest_error = error;
-				lowest_char = MODE7_BLACK_BG;
-			}
-		}
-	}
-
-	// We could enter seperated graphics mode?
-	if (global_use_sep)
-	{
-		if (!sep)
-		{
-			int newstate = GET_STATE(fg, bg, hold_mode, last_gfx_char, true);
-			int error = get_error_for_char(x7, y7, MODE7_SEP_GFX, fg, bg, hold_mode, last_gfx_char, true);
-			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_mode, last_gfx_char, true);
-
-			if (total_error_in_state[newstate][x7 + 1] == -1)
-			{
-				total_error_in_state[newstate][x7 + 1] = remaining;
-				char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
-			}
-
-			error += remaining;
-
-			if (error < lowest_error)
-			{
-				lowest_error = error;
-				lowest_char = MODE7_SEP_GFX;
-			}
-		}
-
-		// We could go back to contiguous graphics...
-		else
-		{
-			int newstate = GET_STATE(fg, bg, hold_mode, last_gfx_char, false);
-			int error = get_error_for_char(x7, y7, MODE7_CONTIG_GFX, fg, bg, hold_mode, last_gfx_char, false);
-			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_mode, last_gfx_char, false);
-
-			if (total_error_in_state[newstate][x7 + 1] == -1)
-			{
-				total_error_in_state[newstate][x7 + 1] = remaining;
-				char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
-			}
-
-			error += remaining;
-
-			if (error < lowest_error)
-			{
-				lowest_error = error;
-				lowest_char = MODE7_CONTIG_GFX;
-			}
-		}
-	}
-
-	// We could enter hold graphics mode!
-	if (global_use_hold)
-	{
-		if (!hold_mode)
-		{
-			int newstate = GET_STATE(fg, bg, true, last_gfx_char, sep);
-			int error = get_error_for_char(x7, y7, MODE7_HOLD_GFX, fg, bg, true, last_gfx_char, sep);			// hold control code does adopt last graphic character immediately
-			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, true, last_gfx_char, sep);
-
-			if (total_error_in_state[newstate][x7 + 1] == -1)
-			{
-				total_error_in_state[newstate][x7 + 1] = remaining;
-				char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
-			}
-
-			error += remaining;
-
-			if (error < lowest_error)
-			{
-				lowest_error = error;
-				lowest_char = MODE7_HOLD_GFX;
-			}
-		}
-
-		// We could exit hold graphics mode..
-		else
-		{
-			int newstate = GET_STATE(fg, bg, false, MODE7_BLANK, sep);
-			int error = get_error_for_char(x7, y7, MODE7_RELEASE_GFX, fg, bg, false, MODE7_BLANK, sep);
-			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, false, MODE7_BLANK, sep);
-
-			if (total_error_in_state[newstate][x7 + 1] == -1)
-			{
-				total_error_in_state[newstate][x7 + 1] = remaining;
-				char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
-			}
-
-			error += remaining;
-
-			if (error < lowest_error)
-			{
-				lowest_error = error;
-				lowest_char = MODE7_RELEASE_GFX;
-			}
-		}
-	}
-
-	for (int c = 1; c < 8; c++)
-	{
-		// We could change our fg colour!
-		if (c != fg)
-		{
-			int newstate = GET_STATE(c, bg, hold_mode, last_gfx_char, sep);
-
-			// The fg colour doesn't actually take effect until next cell - so any hold char here will be in current fg colour
-			int error = get_error_for_char(x7, y7, MODE7_GFX_COLOUR + c, fg, bg, hold_mode, last_gfx_char, sep);			// old state
-
-			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, c, bg, hold_mode, last_gfx_char, sep);			// new state
-
-			if (total_error_in_state[newstate][x7 + 1] == -1)
-			{
-				total_error_in_state[newstate][x7 + 1] = remaining;
-				char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
-			}
-
-			error += remaining;
-
-			if (error < lowest_error)
-			{
-				lowest_error = error;
-				lowest_char = MODE7_GFX_COLOUR + c;
-			}
-		}
-	}
-
-	if (global_try_all)
-	{
-		// Try every possible graphic character...
-
-		for (int i = 1; i < 64; i++)
-		{
-			graphic_char = (MODE7_BLANK) | (i & 0x1f) | ((i & 0x20) << 1);
-
-			int newstate = GET_STATE(fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK, sep);
-			int error = get_error_for_char(x7, y7, graphic_char, fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK, sep);
-			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK, sep);
-
-			if (total_error_in_state[newstate][x7 + 1] == -1)
-			{
-				total_error_in_state[newstate][x7 + 1] = remaining;
-				char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
-			}
-
-			error += remaining;
-
-			if (error < lowest_error)
-			{
-				lowest_error = error;
-				lowest_char = graphic_char;
-			}
-		}
-	}
-	else
-	{
-		// Try our graphic character (if it's not blank)
-
-		if (graphic_char != MODE7_BLANK)
-		{
-			int newstate = GET_STATE(fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK, sep);
-			int error = get_error_for_char(x7, y7, graphic_char, fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK, sep);
-			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK, sep);
-
-			if (total_error_in_state[newstate][x7 + 1] == -1)
-			{
-				total_error_in_state[newstate][x7 + 1] = remaining;
-				char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
-			}
-
-			error += remaining;
-
-			if (error < lowest_error)
-			{
-				lowest_error = error;
-				lowest_char = graphic_char;
-			}
-		}
-	}
-	//	printf("(%d, %d) returning char=%d lowest error=%d\n", x7, y7, lowest_char, lowest_error);
-
-	output[x7] = lowest_char;
-
-	return lowest_error;
 }
 
 int match_closest_palette_colour(unsigned char r, unsigned char g, unsigned char b)
@@ -715,13 +204,7 @@ int main(int argc, char **argv)
 	if (cimg_option("-h", false, 0)) std::exit(0);
 	if (shortname == NULL)  std::exit(0);
 
-	global_use_hold = !no_hold;
-	global_use_fill = !no_fill;
-	global_use_sep = use_sep;
-	global_sep_fg_factor = sep_factor;
-
 	global_use_geometric = !error_lookup;
-	global_try_all = try_all;
 
 	char filename[256];
 	char input[256];
@@ -732,40 +215,23 @@ int main(int argc, char **argv)
 	int resetframes = 0;
 	int skipdeltas = 0;
 
-	unsigned char *beeb = (unsigned char *) malloc(MODE7_MAX_SIZE * NUM_FRAMES);
+	unsigned char *beeb = (unsigned char *) malloc(SCREEN_MAX_SIZE * NUM_FRAMES);
 	unsigned char *ptr = beeb;
 
 	int *delta_counts = (int *)malloc(sizeof(int) * (NUM_FRAMES+1));
 
-	memset(mode7, 0, MODE7_MAX_SIZE);
-	memset(prevmode7, 0, MODE7_MAX_SIZE);
-	memset(delta, 0, MODE7_MAX_SIZE);
+	memset(mode7, 0, SCREEN_MAX_SIZE);
+	memset(prevmode7, 0, SCREEN_MAX_SIZE);
+	memset(delta, 0, SCREEN_MAX_SIZE);
 	memset(delta_counts, 0, sizeof(int) * (NUM_FRAMES+1));
 
 	FILE *file;
 
 	// Blank MODE 7 gfx screen
 
-	for (int i = 0; i < MODE7_MAX_SIZE; i++)
+	for (int i = 0; i < SCREEN_MAX_SIZE; i++)
 	{
-#if _ZERO_FRAME_PRESET
-		switch (i % MODE7_WIDTH)
-		{
-		case 0:
-			prevmode7[i] = MODE7_COL0;
-			break;
-
-		case 1:
-			prevmode7[i] = MODE7_COL1;
-			break;
-
-		default:
-			prevmode7[i] = MODE7_BLANK;
-			break;
-		}
-#else
-		prevmode7[i] = MODE7_BLANK;
-#endif
+		prevmode7[i] = 0;
 	}
 
 	for (int n = start; n <= NUM_FRAMES; n++)
@@ -899,7 +365,7 @@ int main(int argc, char **argv)
 
 						r = GET_RED_FROM_COLOUR(c);
 						g = GET_GREEN_FROM_COLOUR(c);
-					b = GET_BLUE_FROM_COLOUR(c);
+						b = GET_BLUE_FROM_COLOUR(c);
 					}
 				}
 
@@ -943,14 +409,13 @@ int main(int argc, char **argv)
 		else
 		{
 			// Calculate frame size - adjust to width
-			pixel_width = (MODE7_WIDTH - FRAME_FIRST_COLUMN) * 2;
+			pixel_width = SCREEN_W * 2;
 			pixel_height = pixel_width * IMAGE_H / IMAGE_W;
-			if (pixel_height % 3) pixel_height += (3 - (pixel_height % 3));
 
 			// Adjust to height
-			if (pixel_height > MODE7_PIXEL_H)
+			if (pixel_height > PIXEL_H)
 			{
-				pixel_height = MODE7_PIXEL_H;
+				pixel_height = PIXEL_H;
 				pixel_width = pixel_height * IMAGE_W / IMAGE_H;
 
 				if (pixel_width % 1) pixel_width++;
@@ -988,7 +453,7 @@ int main(int argc, char **argv)
 		int frame_error = 0;
 
 		frame_width = pixel_width / 2;
-		frame_height = pixel_height / 3;
+		frame_height = pixel_height;
 
 		if (verbose)
 		{
@@ -996,79 +461,20 @@ int main(int argc, char **argv)
 		}
 
 		// Set everything to blank
-		memset(mode7, MODE7_BLANK, MODE7_MAX_SIZE);
+		memset(mode7, 0, SCREEN_MAX_SIZE);
 
-		for (int y7 = 0; y7 < frame_height; y7++)
+		for (int y = 0; y < frame_height; y++)
 		{
-			int y = IMAGE_Y_FROM_Y7(y7);
-
-			// Reset state as starting new character row
-			// State = fg colour + bg colour + hold character + prev character
-			// For each character cell on this line
-			// Do we have pixels or not?
-			// If we have pixels then need to decide whether is it better to replace this cell with a control code or keep pixels
-			// Possible control codes are: new fg colour, fill (bg colour = fg colour), no fill (bg colour = black), hold graphics (hold char = prev char), release graphics (hold char = empty)
-			// "Better" means that the "error" for the rest of the line (appearance on screen vs actual image = deviation) is minimised
-
-			// Clear our array of error values for each state & x position
-			clear_error_char_arrays();
-
-			int min_error = INT_MAX;
-			int min_colour = 0;
-
-			// Determine best initial state for line
-			for (int fg = 7; fg > 0; fg--)
-			{
-				// What would our first character look like in this state?
-				unsigned char first_char = get_graphic_char_from_image(FRAME_FIRST_COLUMN, y7, fg, 0, false);
-
-				// What's the error for that character?
-				int error = get_error_for_char(FRAME_FIRST_COLUMN, y7, first_char, fg, 0, false, MODE7_BLANK, false);
-
-				// Find the lowest error corresponding to our possible start states
-				if (error < min_error)
-				{
-					min_error = error;
-					min_colour = fg;
-			}
-		}
-
-			// This is our initial state of the line
-			int state = GET_STATE(min_colour, 0, false, MODE7_BLANK, false);
-
-			// Set this state before frame begins
-			mode7[(y7 * MODE7_WIDTH) + (FRAME_FIRST_COLUMN - 1)] = MODE7_GFX_COLOUR + min_colour;
-
-			// Kick off recursive error calculation with that state
-			int error = get_error_for_remainder_of_line(FRAME_FIRST_COLUMN, y7, min_colour, 0, false, MODE7_BLANK, false);
-
-			frame_error += error;
-
-			// Store first character
-			char_for_xpos_in_state[state][FRAME_FIRST_COLUMN] = output[FRAME_FIRST_COLUMN];
-
 			// Copy the resulting character data into MODE 7 screen
-			for (int x7 = FRAME_FIRST_COLUMN; x7 < (FRAME_FIRST_COLUMN + FRAME_WIDTH); x7++)
+
+			for (int x = 0; x < FRAME_WIDTH; x++)
 			{
 				// Copy character chosen in this position for this state
-				unsigned char best_char = char_for_xpos_in_state[state][x7];
+				int left_colour = match_closest_palette_colour(SAFE_SRC(2*x, y, 0), SAFE_SRC(2*x, y, 1), SAFE_SRC(2*x, y, 2));
+				int right_colour = match_closest_palette_colour(SAFE_SRC(2*x+1, y, 0), SAFE_SRC(2*x+1, y, 1), SAFE_SRC(2*x+1, y, 2));
 
-				mode7[(y7 * MODE7_WIDTH) + (x7)] = best_char;
-
-				// Update the state
-				state = get_state_for_char(best_char, state);
+				mode7[(y * SCREEN_W) + x] = left_pixel[left_colour] | right_pixel[right_colour];
 			}
-
-			// For when image is narrower than screen width
-
-			if (FRAME_FIRST_COLUMN + FRAME_WIDTH < MODE7_WIDTH)
-			{
-				mode7[(y7 * MODE7_WIDTH) + FRAME_FIRST_COLUMN + FRAME_WIDTH] = MODE7_BLACK_BG;
-			}
-
-			// printf("\n");
-
-			y += 2;
 		}
 
 		if (verbose)
@@ -1112,7 +518,12 @@ int main(int argc, char **argv)
 		if (numdeltas > maxdeltas) maxdeltas = numdeltas;
 		delta_counts[n] = numdeltas;
 
-		if (numdeltas > FRAME_SIZE/BYTES_PER_DELTA)
+		if (verbose)
+		{
+			printf("ptr=0x%x ", ptr - beeb);
+		}
+
+		if (numdeltas > FRAME_SIZE/ BYTES_PER_DELTA)
 		{
 			numdeltabytes = FRAME_SIZE;
 			resetframes++;
@@ -1139,78 +550,14 @@ int main(int argc, char **argv)
 
 			for (int i = 0; i < FRAME_SIZE; i++)
 			{
-				if (delta[i] != 0)
+				if (mode7[i] != prevmode7[i])
 				{
 					unsigned char byte = mode7[i];			//  ^ prevmode7[i] for EOR with prev.
 
-#if _USE_16_BIT_PACK
-					unsigned short offset = (i - previ);		// could be up to 10 bits
-					unsigned char data = 0;
-					unsigned char flag = 1;
-
-					if (byte < 128)
-					{
-						// Graphics character
-
-						flag = 0;										// bit 9 is our control code flag
-						data = (byte & 31) | ((byte & 64) >> 1);		// mask out bit 5, shift down bit 6
-					}
-					else if (byte > MODE7_GFX_COLOUR && byte < MODE7_GFX_COLOUR + 8)
-					{
-						// Colour code
-						unsigned char code = 1;				// code 1 = colour
-						unsigned char colour = byte - MODE7_GFX_COLOUR;
-
-						data = (colour << 3) | code;
-					}
-					else if (byte >= MODE7_CONTIG_GFX && byte < 160)
-					{
-						unsigned char code = 2;				// code 2 = control
-						unsigned char control = byte - (MODE7_CONTIG_GFX - 1);
-
-						data = (control << 3) | code;
-					}
-
-					// Check if offset is 10-bits!
-
-					if (offset > 0x1ff)
-					{
-						// Insert a control code to skip offset 511
-
-						if (verbose)
-						{
-							printf("*SKIP* (%x) ", ptr - beeb);					// NEED TO GO BACK AND UPDATE #DELTAS IN STREAM ABOVE!
-						}
-
-						// This control code does nothing
-
-						unsigned short skip = (0 < 10) | (1 << 9) | (0x1ff);
-						*ptr++ = LO(skip);
-						*ptr++ = HI(skip);
-
-						// But does reduce our offset to 9-bits
-
-						offset -= 0x1ff;
-
-						// We added a delta
-						numdeltas++;
-
-						// Remember how many skips
-						skipdeltas++;
-					}
-
-					// Pack our delta value into 16-bits
-
-					unsigned short pack = (data << 10) | (flag << 9) | (offset);
-
-					*ptr++ = LO(pack);
-					*ptr++ = HI(pack);
-#else
 					// No pack
 					*ptr++ = LO((i - previ));
 					*ptr++ = HI((i - previ));
 					*ptr++ = byte;
-#endif
 
 					previ = i;								// or 0 for offset from screen start
 				}
@@ -1281,7 +628,7 @@ int main(int argc, char **argv)
 			}
 		}
 
-		memcpy(prevmode7, mode7, MODE7_MAX_SIZE);
+		memcpy(prevmode7, mode7, SCREEN_MAX_SIZE);
 
 		if (verbose)
 		{

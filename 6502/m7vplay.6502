@@ -35,13 +35,13 @@ NOP_OP = $ea
 \ *	Define debug flags
 \ ******************************************************************
 
-_DEBUG = TRUE
+_DEBUG = FALSE
 _WAIT_KEYPRESS = FALSE				; could implement play/pause/step
-_ENABLE_WALLCLOCK = TRUE
-_COUNT_DECRUNCHES = FALSE
+_ENABLE_WALLCLOCK = FALSE
+_COUNT_DECRUNCHES = TRUE
 _TRY_TO_MATCH_FRAMERATE = FALSE
 _CHECK_LOAD_BUFFER = FALSE
-_USE_16_BIT_PACK = TRUE
+_USE_16_BIT_PACK = FALSE
 
 \ ******************************************************************
 \ *	Define macros
@@ -63,25 +63,27 @@ EXO_buffer_len = 4096
 
 \\ MODE 7
 MODE7_base_addr = &7C00
-MODE7_char_width = 40
-MODE7_char_height = 25
+MODE7_char_width = 32
+MODE7_char_height = 32
 MODE7_screen_size = (MODE7_char_width * MODE7_char_height)
 
-MODE7_texel_width = (MODE7_char_width - 2) * 2
-MODE7_texel_height = MODE7_char_height * 3
+PAL_black	= (0 EOR 7)
+PAL_blue	= (4 EOR 7)
+PAL_red		= (1 EOR 7)
+PAL_magenta = (5 EOR 7)
+PAL_green	= (2 EOR 7)
+PAL_cyan	= (6 EOR 7)
+PAL_yellow	= (3 EOR 7)
+PAL_white	= (7 EOR 7)
 
-MODE7_alpha_black = 128
-MODE7_graphic_black = 144
-MODE7_contiguous = 153
-MODE7_separated = 154
-
+ULA_mode8	= &E0			; 10 chars per line, low freq clock
 
 \ ******************************************************************
 \ *	Define app constants
 \ ******************************************************************
 
-VID_default_mode7_ypos = 3
-VID_default_frame_height = 19		; 14 = Grav
+VID_default_mode7_ypos = 0
+VID_default_frame_height = 0		; 14 = Grav
 VID_default_frame_size = (MODE7_char_width * VID_default_frame_height)
 VID_default_frame_addr = MODE7_base_addr + (VID_default_mode7_ypos * MODE7_char_width)
 
@@ -152,6 +154,7 @@ IF _COUNT_DECRUNCHES
 ENDIF
 
 .old_irqv				SKIP 2
+.old_eventv				SKIP 2
 
 \ ******************************************************************
 \ *	Start address to be saved
@@ -179,24 +182,13 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 
 \\ ***** System initialise ***** \\
 
-	\\ Set MODE 7
-	LDA #22: JSR oswrch
-	LDA #7: JSR oswrch
+	\\ Initialise system & demo
+	LDA #22
+	JSR oswrch
+	LDA #5
+	JSR oswrch
 
-	\\ Must be a simpler way to turn off cursor than this!!
-	LDA #23: JSR oswrch
-	LDA #1: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-
-	\\ Set gfx mode
-	JSR teletexel_init
+	JSR set_mode8
 
 	\\ Zero our variables
 	LDA #0
@@ -269,6 +261,7 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	STA VID_frame_end+1
 
 	\\ Enable irq
+	IF 1
 	{
 		SEI
 		LDA IRQ1V:STA old_irqv
@@ -284,6 +277,9 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 		STA &FE4E					; R14=Interrupt Enable (enable timer 1 interrupt)
 		CLI
 	}
+	ELSE
+	JSR start_eventv
+	ENDIF
 
 	\\ Top of our loop
 	.next_frame
@@ -295,6 +291,10 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	IF _DEBUG
 	JSR write_debug_info
 	ENDIF
+
+	\\ Heartbeat
+	LDA vsync_count
+	STA &7C00
 
 	\\ Load more data if needed
 
@@ -318,10 +318,14 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	JMP next_frame
 
 	.track_load_error
+	IF 1
 	SEI
 	LDA old_irqv:STA IRQ1V
 	LDA old_irqv+1:STA IRQ1V+1		; set interrupt handler
 	CLI
+	ELSE
+	JSR stop_eventv
+	ENDIF
 
 	\\ Exit cleanly (we hope)
 	.return
@@ -605,6 +609,13 @@ ENDIF
 	ADC writeptr+1
 	STA writeptr+1
 
+	{
+		CMP #&7C
+		BCS ok
+		BRK
+		.ok
+	}
+
 	\\ Decode pixels into MODE 7 byte (6 bits)
 	\\ 00X1 1111
 	\\ 0X01 1111
@@ -871,6 +882,7 @@ ENDIF
 \ * IRQ
 \ ******************************************************************
 
+IF 1
 .irq_handler
 {
 	LDA &FC
@@ -982,40 +994,47 @@ ENDIF
 	STA &FC
 	JMP (old_irqv)		; RTI
 }
+ENDIF
 
 \ ******************************************************************
 \ *	Set up MODE 7 screen
 \ ******************************************************************
 
-.teletexel_init						; set blank screen
+.set_mode8
 {
-	\\ Reset our write ptr
-	LDA #LO(MODE7_base_addr)
-	STA writeptr
-	LDA #HI(MODE7_base_addr)
-	STA writeptr+1
+	\\ Set up hardware state etc.
 
-	LDY #0
-	.loop
-	LDA #MODE7_graphic_black + 7	; white
-	STA (writeptr),Y
+	LDA #154
+	LDX #ULA_mode8
+	JSR osbyte
 
-	\\ 2nd column here
+	SEI							; disable interupts
 
-	CLC
-	LDA writeptr
-	ADC #MODE7_char_width
-	STA writeptr
-	LDA writeptr+1
-	ADC #0
-	STA writeptr+1
+	\\ Set up CRTC for MODE 8
 
-	LDA writeptr
-	CMP #LO(MODE7_base_addr + MODE7_screen_size)
-	BNE loop
-	LDA writeptr+1
-	CMP #HI(MODE7_base_addr + MODE7_screen_size)
-	BNE loop
+	LDX #13
+	.crtcloop
+	STX &FE00
+	LDA main_crtcregs,X
+	STA &FE01
+	DEX
+	BPL crtcloop
+
+	\\ Set up video ULA for MODE 0
+
+;	LDA #ULA_mode8
+;	STA &FE20
+
+	\\ Must set palette registers or mode doesn't work!
+
+	LDX #15
+	.palloop
+	LDA palette, X
+	STA &FE21
+	DEX
+	BPL palloop
+
+	CLI				; enable interupts
 
 	.return
 	RTS
@@ -1518,6 +1537,49 @@ NEXT
 FOR n,0,25,1
 EQUB HI(n * MODE7_char_width)
 NEXT
+
+\ ******************************************************************
+\ *	Values of CRTC regs for MODE 1
+\ ******************************************************************
+
+.main_crtcregs
+{
+	EQUB 63				; R0  horizontal total
+	EQUB 32				; R1  horizontal displayed
+	EQUB 49				; R2  horizontal position
+	EQUB &24			; R3  sync width 40 = &28
+	EQUB 38				; R4  vertical total
+	EQUB 0				; R5  vertical total adjust
+	EQUB 32				; R6  vertical displayed
+	EQUB 34				; R7  vertical position; 35=top of screen
+	EQUB 0				; R8  interlace
+	EQUB 7				; R9  scanlines per row
+	EQUB 32				; R10 cursor start
+	EQUB 8				; R11 cursor end
+	EQUB HI(&2800)		; R12 screen start address, high
+	EQUB LO(&2800)		; R13 screen start address, low
+}
+
+.palette
+{
+	EQUB &00 + PAL_black
+	EQUB &10 + PAL_red
+	EQUB &20 + PAL_green
+	EQUB &30 + PAL_yellow
+	EQUB &40 + PAL_blue
+	EQUB &50 + PAL_magenta
+	EQUB &60 + PAL_cyan
+	EQUB &70 + PAL_white
+	EQUB &80 + PAL_black
+	EQUB &90 + PAL_red
+	EQUB &A0 + PAL_green
+	EQUB &B0 + PAL_yellow
+	EQUB &C0 + PAL_blue
+	EQUB &D0 + PAL_magenta
+	EQUB &E0 + PAL_cyan
+	EQUB &F0 + PAL_white
+}
+
 
 \ ******************************************************************
 \ *	End address to be saved

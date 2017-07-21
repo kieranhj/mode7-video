@@ -5,7 +5,7 @@ del "%1\disks\%1_disk2.ssd"
 bin\bbcim -a "%1\disks\%1_disk1.ssd" "m7vplay"
 CD files
 ..\bin\bbcim -a "..\%1\disks\%1_disk1.ssd" "Boot"
-..\bin\bbcim -a "..\%1\disks\%1_disk1.ssd" "Dummy"
+..\bin\bbcim -a "..\%1\disks\%1_disk1.ssd" "Dummy3"
 ..\bin\bbcim -a "..\%1\disks\%1_disk2.ssd" "Dummy8"
 CD "..\%1\files"
 ..\..\bin\bbcim -a "..\disks\%1_disk1.ssd" "%1_beeb_00"
