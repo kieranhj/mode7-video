@@ -6,14 +6,14 @@
 
 using namespace cimg_library;
 
-#define SCREEN_W			32
-#define SCREEN_H			32
+#define SCREEN_W			40			// in bytes
+#define SCREEN_H			256
 
 #define IMAGE_W				(src._width)
 #define IMAGE_H				(src._height)
 
-#define PIXEL_W				64
-#define PIXEL_H				32
+#define PIXEL_W				320
+#define PIXEL_H				256
 
 #define FRAME_WIDTH			(frame_width)
 #define FRAME_HEIGHT		(frame_height)
@@ -200,6 +200,9 @@ int main(int argc, char **argv)
 	const bool url = cimg_option("-url", false, "Spit out URL for edit.tf");
 	const bool error_lookup = cimg_option("-lookup", false, "Use lookup table for colour error (default is geometric distance)");
 	const bool try_all = cimg_option("-slow", false, "Calculate full line error for every possible graphics character (64x slower)");
+
+	const int mode = cimg_option("-m", 4, "Grey conversion mode");
+	const int thresh = cimg_option("-t", 127, "B&W threshold value");
 
 	if (cimg_option("-h", false, 0)) std::exit(0);
 	if (shortname == NULL)  std::exit(0);
@@ -409,7 +412,7 @@ int main(int argc, char **argv)
 		else
 		{
 			// Calculate frame size - adjust to width
-			pixel_width = SCREEN_W * 2;
+			pixel_width = SCREEN_W * 8;
 			pixel_height = pixel_width * IMAGE_H / IMAGE_W;
 
 			// Adjust to height
@@ -418,7 +421,7 @@ int main(int argc, char **argv)
 				pixel_height = PIXEL_H;
 				pixel_width = pixel_height * IMAGE_W / IMAGE_H;
 
-				if (pixel_width % 1) pixel_width++;
+				if (pixel_width % 8) pixel_width += 8 - (pixel_width % 8);
 
 				// Need to handle reset of background if frame_width < MODE7_WIDTH
 			}
@@ -452,8 +455,10 @@ int main(int argc, char **argv)
 
 		int frame_error = 0;
 
-		frame_width = pixel_width / 2;
+		frame_width = pixel_width / 8;
 		frame_height = pixel_height;
+
+		if (frame_height % 8) frame_height += 8 - (frame_height % 8);
 
 		if (verbose)
 		{
@@ -469,11 +474,17 @@ int main(int argc, char **argv)
 
 			for (int x = 0; x < FRAME_WIDTH; x++)
 			{
-				// Copy character chosen in this position for this state
-				int left_colour = match_closest_palette_colour(SAFE_SRC(2*x, y, 0), SAFE_SRC(2*x, y, 1), SAFE_SRC(2*x, y, 2));
-				int right_colour = match_closest_palette_colour(SAFE_SRC(2*x+1, y, 0), SAFE_SRC(2*x+1, y, 1), SAFE_SRC(2*x+1, y, 2));
+				unsigned char byte = 0;
 
-				mode7[(y * SCREEN_W) + x] = left_pixel[left_colour] | right_pixel[right_colour];
+				// Copy character chosen in this position for this state
+				for (int p = 0; p < 8; p++)
+				{
+					unsigned char grey = pixel_to_grey(mode, SAFE_SRC(8 * x + p, y, 0), SAFE_SRC(8 * x + p, y, 1), SAFE_SRC(8 * x + p, y, 2));
+
+					if (grey > thresh) byte |= (1 << (7 - p));
+				}
+
+				mode7[((y / 8) * SCREEN_W * 8) + (y % 8) + (x * 8)] = byte;
 			}
 		}
 

@@ -62,9 +62,9 @@ ENDMACRO
 EXO_buffer_len = 4096
 
 \\ MODE 7
-MODE7_base_addr = &7C00
-MODE7_char_width = 32
-MODE7_char_height = 32
+MODE7_base_addr = &5800
+MODE7_char_width = 40
+MODE7_char_height = 256
 MODE7_screen_size = (MODE7_char_width * MODE7_char_height)
 
 PAL_black	= (0 EOR 7)
@@ -83,7 +83,7 @@ ULA_mode8	= &E0			; 10 chars per line, low freq clock
 \ ******************************************************************
 
 VID_default_mode7_ypos = 0
-VID_default_frame_height = 0		; 14 = Grav
+VID_default_frame_height = 256		; 14 = Grav
 VID_default_frame_size = (MODE7_char_width * VID_default_frame_height)
 VID_default_frame_addr = MODE7_base_addr + (VID_default_mode7_ypos * MODE7_char_width)
 
@@ -161,7 +161,7 @@ ENDIF
 \ ******************************************************************
 
 ORG &1900	      					; code origin - assume standard BBC Micro
-GUARD &7C00							; ensure code size doesn't hit start of screen memory
+GUARD &5800							; ensure code size doesn't hit start of screen memory
 
 .start
 
@@ -185,10 +185,10 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	\\ Initialise system & demo
 	LDA #22
 	JSR oswrch
-	LDA #5
+	LDA #4
 	JSR oswrch
 
-	JSR set_mode8
+;	JSR set_mode8
 
 	\\ Zero our variables
 	LDA #0
@@ -610,7 +610,7 @@ ENDIF
 	STA writeptr+1
 
 	{
-		CMP #&7C
+		CMP #HI(MODE7_base_addr)
 		BCS ok
 		BRK
 		.ok
