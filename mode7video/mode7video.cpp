@@ -129,6 +129,13 @@ static int error_colour_vs_colour[8][8] = {
 #endif
 };
 
+static int dither4[4][4] = {
+	1,  9,  3, 11,
+	13,  5, 15,  7,
+	4, 12,  2, 10,
+	16,  8, 14,  6
+};
+
 static unsigned char left_pixel[16] = {
 	0x00,0x02,0x08,0x0A,0x20,0x22,0x28,0x2A,0x80,0x82,0x88,0x8A,0xA0,0xA2,0xA8,0xAA
 };
@@ -479,9 +486,13 @@ int main(int argc, char **argv)
 				// Copy character chosen in this position for this state
 				for (int p = 0; p < 8; p++)
 				{
-					unsigned char grey = pixel_to_grey(mode, SAFE_SRC(8 * x + p, y, 0), SAFE_SRC(8 * x + p, y, 1), SAFE_SRC(8 * x + p, y, 2));
+					unsigned char grey = 16 * pixel_to_grey(mode, SAFE_SRC(8 * x + p, y, 0), SAFE_SRC(8 * x + p, y, 1), SAFE_SRC(8 * x + p, y, 2)) / 255;
 
-					if (grey > thresh) byte |= (1 << (7 - p));
+					//if (grey > thresh)
+					if( grey >= dither4[(8*x+p) % 4][y % 4] )
+					{
+						byte |= (1 << (7 - p));
+					}
 				}
 
 				mode7[((y / 8) * SCREEN_W * 8) + (y % 8) + (x * 8)] = byte;
