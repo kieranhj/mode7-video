@@ -486,10 +486,11 @@ int main(int argc, char **argv)
 				// Copy character chosen in this position for this state
 				for (int p = 0; p < 8; p++)
 				{
-					unsigned char grey = 16 * pixel_to_grey(mode, SAFE_SRC(8 * x + p, y, 0), SAFE_SRC(8 * x + p, y, 1), SAFE_SRC(8 * x + p, y, 2)) / 255;
+					unsigned char grey = pixel_to_grey(mode, SAFE_SRC(8 * x + p, y, 0), SAFE_SRC(8 * x + p, y, 1), SAFE_SRC(8 * x + p, y, 2));
+					//unsigned char grey = 16 * pixel_to_grey(mode, SAFE_SRC(8 * x + p, y, 0), SAFE_SRC(8 * x + p, y, 1), SAFE_SRC(8 * x + p, y, 2)) / 255;
 
-					//if (grey > thresh)
-					if( grey >= dither4[(8*x+p) % 4][y % 4] )
+					if (grey > thresh)
+					//if( grey >= dither4[(8*x+p) % 4][y % 4] )
 					{
 						byte |= (1 << (7 - p));
 					}
