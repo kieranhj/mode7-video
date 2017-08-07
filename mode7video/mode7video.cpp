@@ -200,6 +200,7 @@ int main(int argc, char **argv)
 	const bool url = cimg_option("-url", false, "Spit out URL for edit.tf");
 	const bool error_lookup = cimg_option("-lookup", false, "Use lookup table for colour error (default is geometric distance)");
 	const bool try_all = cimg_option("-slow", false, "Calculate full line error for every possible graphics character (64x slower)");
+	const int grey = cimg_option("-grey", 5, "Grey scale conversion mode = R/G/B/mean/luma");
 
 	if (cimg_option("-h", false, 0)) std::exit(0);
 	if (shortname == NULL)  std::exit(0);
@@ -470,8 +471,13 @@ int main(int argc, char **argv)
 			for (int x = 0; x < FRAME_WIDTH; x++)
 			{
 				// Copy character chosen in this position for this state
+#if 0
 				int left_colour = match_closest_palette_colour(SAFE_SRC(2*x, y, 0), SAFE_SRC(2*x, y, 1), SAFE_SRC(2*x, y, 2));
 				int right_colour = match_closest_palette_colour(SAFE_SRC(2*x+1, y, 0), SAFE_SRC(2*x+1, y, 1), SAFE_SRC(2*x+1, y, 2));
+#else
+				int left_colour = pixel_to_grey(grey, SAFE_SRC(2 * x, y, 0), SAFE_SRC(2 * x, y, 1), SAFE_SRC(2 * x, y, 2)) >> 4;
+				int right_colour = pixel_to_grey(grey, SAFE_SRC(2 * x + 1, y, 0), SAFE_SRC(2 * x + 1, y, 1), SAFE_SRC(2 * x + 1, y, 2)) >> 4;
+#endif
 
 				mode7[(y * SCREEN_W) + x] = left_pixel[left_colour] | right_pixel[right_colour];
 			}
