@@ -7,13 +7,13 @@
 using namespace cimg_library;
 
 #define SCREEN_W			40			// in bytes
-#define SCREEN_H			256
+#define SCREEN_H			120	//256
 
 #define IMAGE_W				(src._width)
 #define IMAGE_H				(src._height)
 
-#define PIXEL_W				320
-#define PIXEL_H				256
+#define PIXEL_W				160	//320
+#define PIXEL_H				120	//256
 
 #define FRAME_WIDTH			(frame_width)
 #define FRAME_HEIGHT		(frame_height)
@@ -419,7 +419,7 @@ int main(int argc, char **argv)
 		else
 		{
 			// Calculate frame size - adjust to width
-			pixel_width = SCREEN_W * 8;
+			pixel_width = SCREEN_W * 4;
 			pixel_height = pixel_width * IMAGE_H / IMAGE_W;
 
 			// Adjust to height
@@ -428,7 +428,7 @@ int main(int argc, char **argv)
 				pixel_height = PIXEL_H;
 				pixel_width = pixel_height * IMAGE_W / IMAGE_H;
 
-				if (pixel_width % 8) pixel_width += 8 - (pixel_width % 8);
+				if (pixel_width % 4) pixel_width += 4 - (pixel_width % 4);
 
 				// Need to handle reset of background if frame_width < MODE7_WIDTH
 			}
@@ -462,7 +462,7 @@ int main(int argc, char **argv)
 
 		int frame_error = 0;
 
-		frame_width = pixel_width / 8;
+		frame_width = pixel_width / 4;
 		frame_height = pixel_height;
 
 		if (frame_height % 8) frame_height += 8 - (frame_height % 8);
@@ -484,15 +484,15 @@ int main(int argc, char **argv)
 				unsigned char byte = 0;
 
 				// Copy character chosen in this position for this state
-				for (int p = 0; p < 8; p++)
+				for (int p = 0; p < 4; p++)
 				{
-					unsigned char grey = pixel_to_grey(mode, SAFE_SRC(8 * x + p, y, 0), SAFE_SRC(8 * x + p, y, 1), SAFE_SRC(8 * x + p, y, 2));
+					unsigned char grey = pixel_to_grey(mode, SAFE_SRC(4 * x + p, y, 0), SAFE_SRC(4 * x + p, y, 1), SAFE_SRC(4 * x + p, y, 2));
 					//unsigned char grey = 16 * pixel_to_grey(mode, SAFE_SRC(8 * x + p, y, 0), SAFE_SRC(8 * x + p, y, 1), SAFE_SRC(8 * x + p, y, 2)) / 255;
 
 					if (grey > thresh)
 					//if( grey >= dither4[(8*x+p) % 4][y % 4] )
 					{
-						byte |= (1 << (7 - p));
+						byte |= 0x88 >> p;		// (1 << (7 - p));
 					}
 				}
 
