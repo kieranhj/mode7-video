@@ -6,14 +6,14 @@
 
 using namespace cimg_library;
 
-#define SCREEN_W			40			// in bytes
-#define SCREEN_H			120	//256
+#define SCREEN_W			30			// in bytes
+#define SCREEN_H			96	//256
 
 #define IMAGE_W				(src._width)
 #define IMAGE_H				(src._height)
 
-#define PIXEL_W				160	//320
-#define PIXEL_H				120	//256
+#define PIXEL_W				120	//320
+#define PIXEL_H				90	//256
 
 #define FRAME_WIDTH			(frame_width)
 #define FRAME_HEIGHT		(frame_height)
@@ -21,7 +21,7 @@ using namespace cimg_library;
 #define NUM_FRAMES			frames			// 5367		// 5478
 #define FRAME_SIZE			(SCREEN_W * FRAME_HEIGHT)
 
-#define BYTES_PER_DELTA		3
+#define BYTES_PER_DELTA		2	//3
 
 #define SCREEN_MAX_SIZE		(SCREEN_W * SCREEN_H)
 
@@ -577,10 +577,14 @@ int main(int argc, char **argv)
 				{
 					unsigned char byte = mode7[i];			//  ^ prevmode7[i] for EOR with prev.
 
+					unsigned short pack = ((byte & 0xf0) << 8) | ((i - previ) & 0x0fff);
+
 					// No pack
-					*ptr++ = LO((i - previ));
-					*ptr++ = HI((i - previ));
-					*ptr++ = byte;
+					//*ptr++ = LO((i - previ));
+					//*ptr++ = HI((i - previ));
+					//*ptr++ = byte;
+					*ptr++ = LO(pack);
+					*ptr++ = HI(pack);
 
 					previ = i;								// or 0 for offset from screen start
 				}
