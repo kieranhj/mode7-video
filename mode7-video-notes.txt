@@ -378,5 +378,13 @@ Easy to use ffmpeg to extra individual frames at 78x75 resolution in jpg format.
 - pass through exomiser at different parameter settings to see if this is feasible
 
 
-
-
+Divide each frame into 8x8 tiles
+Count frequency of each possible tile
+Sort by frequency, take top 256 tiles
+Go back over each frame and convert into tiles mapped to nearest match
+Then diff tile map for each frame
+How to encode tile diffs?
+Need 10 bits for 32x32 tile map addressing
+Could have 6 bits for span, followed by N tile indices
+Or 5 bits for span (as 32 tile width)
+1 bit to specify rectangle 3x2 bits 8x4 tiles max?
