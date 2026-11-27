@@ -1,0 +1,382 @@
+Approx 6570 frames at 30Hz (3m 39s)
+Mode 7 screen = 1000 bytes (40 * 25)
+Total = 6,570,000 bytes
+
+Intial estimates
+Average 250 delta bytes / frame (25% of bytes changed)
+Could be packed into 250 * 2 = 500 bytes frame with proposed 2 bytes per delta scheme
+
+Exomiser compresses 29,000 bytes of raw Mode 7 into 3797 bytes ~= 13.1%
+Suggests total raw data Exo compressed ~ 860,217 bytes
+
+Exo compressing entire delta frames actually comes out larger than raw!
+4285 bytes for 29,000 bytes of raw delta ~= 14.8%
+
+I guess in the raw version bit 5 is always set (ASCII 32) but not in the delta version
+
+Random thoughts
+Can strip out every 6th frame for 25Hz
+
+Technically can strip out 2 bits per screen byte - just 6 bits for pixels
+Screen frame = 39*25*6 bits = 731.25 bytes per frame
+Pack 4 screen bytes into 3 stream bytes
+
+RLE looks good for these sparse screens
+
+
+Final total is 6572 frames at 30Hz
+Total raw = 6572 * 1000 = 6,572,000 bytes
+Exomiser takes this down to 620,957 bytes concatenated ~= 9.45%
+That's 606k - pretty amazing but need to get under 400k!
+
+Can take out every 6th frame for 30Hz -> 25Hz
+Which would be approx 517,464 bytes = 505k
+
+Exomising individual frames comes out much larger of course
+Individual raw ~= 992,312 bytes  Individual exo ~= 808,773 bytes
+
+RAW
+1024 window = 620,957
+4096 window = 589,871
+
+DELTA
+1024 window = 600,221
+4096 window = 561,454
+
+
+Options
+~~~~~~~
+1. Reencode at 25Hz = 5477 frames
+2. Export as 6-bit frames
+3. Export as delta stream
+4. Export as RLE raw or deltas
+
+
+At 25Hz
+totaldeltas=412658 totalbytes=828056
+deltas / frame=75.330048
+bytes / frame=151.160278
+bytes / second=3779.006836
+projected size (5478 frames) = 828056 bytes
+
+Exo encoding all full frame deltas 492,148 bytes ~= 480k (9%)
+
+
+Attempt 1
+Delta format
+2 bytes = num deltas this frame (low byte / high byte)
+&FF00 = reset (1000 literal bytes)
+&FFFF = end of stream
+398,290 bytes = 380k!
+This scheme assumes deltas can be applied randomly,i.e. we have to decode the offset from
+start of screen memory each time.  But we know they can be in order from start to end of
+screen memory.
+
+What about?
+1 byte = skip N bytes
+1 byte = number of literals
+N bytes write to screen
+Until overrun end of screen (or have a terminator)
+No delta screens now encoded in 8 bytes = skip 255 + write nothing x 4
+Because first column never changes can only get 39 literals
+Need to be clever and skip gaps of one unchanged byte
+Frame size = 2x #literals + #deltas so have to have > 2x deltas as literals for this to be a saving
+
+How about combining the two?
+So instead of encoding offset from start of screen in each packed 16-bit encode offset from
+previous byte.  This means bytes that are next to each other will have a lot more zero bits
+
+Potentially down to 248,614 bytes ~= 242k!  Now we're talking :)
+Need to decode 140 bytes per (25Hz) frame or 3495 bytes per second.
+Need to load 1135 bytes per second ~1.1kb for 219 seconds.
+
+Actually 465,828 bytes ~= 454k (55.5%).  Doh!  Still not quite there for DSD.
+Target is 368,640 bytes = 360k (leave room for exe & music.)
+
+Next steps
+Split into two files for side 0 and side 2 of DSD
+Implement blocking load of 16kb chunks (say) - done into 5x chunks ~100kb
+Implement unpack and display
+Implement streamed loading
+Find a solution for music!
+
+
+Last push!
+Frame types:
+0 : no change (null frame)
+1 : <= 255 individual deltas (P-frame)
+2 : > 255 individual deltas (P-frame)
+3 : spaces & literals (P-frame)
+4 : reset (I-frame)
+FF : end of stream
+
+1 byte = frame type
+Type 1
+1 byte = number deltas
+2 bytes for each packed 16-bit delta offset + pixel bits
+
+Type 2
+As above but 2 bytes for number of deltas
+
+Type 3
+1 byte = blanks to skip (0 = done)
+1 byte = #literals to copy (0 = none)
+N bytes = literal chars
+...
+
+Type 4
+1000 bytes = entire MODE 7 screen
+
+Gah!  This scheme reduces the overall amount of data but doesn't compress as well...
+
+
+TI 84+ SE - http://www.youtube.com/watch?v=Eq5T9dE58E4 
+TI-99/4A - http://www.youtube.com/watch?v=FsxQ2PyVF9w 
+Atari 2600 - http://www.youtube.com/watch?v=Ko9ZA50X71s 
+Atari 5200 - http://www.youtube.com/watch?v=a_XuHRBVYOA 
+Commodore 64 - http://www.youtube.com/watch?v=OsDy-4L6-tQ 
+Commodore 64+ - http://www.youtube.com/watch?v=MQ0l4tcmC7I 
+Sega Megadrive - http://www.youtube.com/watch?v=2vPe452cegU 
+NES - http://www.youtube.com/watch?v=qRdGhHEoj3o 
+Super Nintendo - http://www.youtube.com/watch?v=Xi_4DTwsx98 
+GameBoy - http://www.youtube.com/watch?v=_Wdr18bUjZs 
+GameBoy Advance (video) - http://www.youtube.com/watch?v=TANSiebOA5M 
+Vectrex - http://www.youtube.com/watch?v=_aFXvoTnsBU 
+IBM XT Portable 5155 - http://www.youtube.com/watch?v=E0h8BUUboP0#t=3m24s 
+IBM PC/XT 5160 - http://www.youtube.com/watch?v=OT2ufnGe9Cc 
+Compaq Portable - http://www.youtube.com/watch?v=09z9YHxc0x4 
+Apple II - http://www.youtube.com/watch?v=X8osEgYzPNo 
+C1-65A oscilloscope - http://www.youtube.com/watch?v=7pzvEouWino 
+laser scanner - http://www.youtube.com/watch?v=5A9Eh6D-K_g 
+3D version - http://www.youtube.com/watch?v=iV5A-VzKWvw 
+
+Music in AY2: http://zxart.ee/eng/authors/n/nq/bad-apple1/
+
+Next steps
+- Sync to 25Hz - KIND OF DONE, STILL A BIT DODGY
+- Put remainder of files on second drive - DONE
+- Graceful handling of file not found - DONE WITH TRACKS
+- Graceful handling (blocking) if data not ready - DONE (exits)
+- Look at quality of jpg images vs MODE 7 - any tweaks to threshold?  DONE
+- Investigate how many bits change per byte stored
+- Investigate min/max offsets within frame - or windowed changes
+- Try other frame rates if necessary!
+
+- Triple buffering files? e.g. 3x 6kb rather than 2x 8kb - TRACKS WORK BETTER
+- Load individual sectors / tracks from disk
+  - e.g. 1x track (10x 256 bytes) at a time as read ptr passes markers - circular buffer
+  - this is quite appealing :)  - DONE
+
+- Look at how B&W threshold is computed - currently just red channel!
+  - Calculate grey value more accurately - average or luminance
+  - Can we do dithering for instance?  Look at ordered dithering again. - DONE
+  - Ordered dithering 2x2 and 3x3 - DONE
+  - Floyd Steinberg - DONE
+- Subtitles for Bad Apple?
+
+Other vids to rip:
+Photon by Fairlight: https://www.youtube.com/watch?v=gkR9JWwY4rA&index=18&list=PL9HVvEQXdWVaIrvIdtxPqY97nPHJiEdsJ - CRAP
+
+Strata by Jontte: https://www.youtube.com/watch?v=swjn-PoQK2o&list=PL9HVvEQXdWVaIrvIdtxPqY97nPHJiEdsJ&index=45 - MAYBE
+
+The Scene is Dead by Razor 1911: https://www.youtube.com/watch?v=IFXIGHOElrE - CRAP
+
+Cebit 90?  Very long!
+
+
+To Do:
+
+- Get 3x steps of video compression into one batch file if possible with minimal params (just name & short name?) - DONE
+- Make disks with short name only - DONE
+- Disk to have safe (event) version and new (interrupt) executable both included - DONE
+- Can then quickly try new encoding schemes & timing etc.! - DONE
+
+Additions
+- Command line parameteres to specify drive numbers, y pos and frame height - DONE
+- Still some bugs in certain cases when video doesn't play to end - WAS START TRACK ON DISK 2
+- Accurate timing still not right (does it matter?)
+- Investigate better encoding options - RATHER DO MODE 4 :)
+- Ability to change frame rate (just do this at the rip_frames stage) - doesn't always help!
+- Use entire side of disk (up to frame 80)
+- Video playback as just overlay on real-time effects (animation playback)
+- Encode frame size into stream header rather than cmd line - DONE
+- Encode png frames for less noise / error - DONE
+
+
+Challenge becomes finding good videos for such low-res B&W!
+Anything already B&W - Bad Apple
+Not tried it on actual film captures
+
+
+
+OTHER MODES
+- 64x48 pixels = 4:3 or 64x36 = 16:9 => 
+- 128x96 or 128x72 => 9216 pixels
+- 1bpp = 1536b/1152b, 2bpp = 3072b/2304b, 4bpp = 6144b/4608b
+- 160x90 or 160x120 at 1bpp = 1800b/2400b
+
+Simon's Cat
+320x180x1bpp = 7200b (MODE4 16:9)
+40 cols x 180 rows req. 13 bits (2^13 = 8192)
+Need 13 + 8 bits = 21 bits - how to get 5 bits back?! :)
+Split into 4x windows? 160x90 = 20colsx90rows = 1800 = 11 bits
+SPlit into 4x windows but nibbles? 40colsx90rows = 3600 = 12 bits + 4 bits for nibble? :)
+
+Frame is 320x180x1pp
+Split into 4 pixel nibbles
+80x180 nibbles
+Split frame into 4x windows of nibbles (0,0)->(39,89) (40,0)->(79,89) (0,90)->(39,179) (40,90)->(79,179)
+Calculate deltas in 4 pixel chunks in each window
+Each window has N deltas
+Each delta packed into:
+- top 4 bits is screen nibble
+- bottom 12 bits is offset into window (0 -> 40 * 90) = (0 - 3600)
+Should be able to calculate screen address relatively easily
+Must be some cunning way to multiply up from window pitch into screen pitch :)
+Knock off bottom bit for which nibble of byte
+
+Alternatively identify min/max window of deltas per frame
+Variable size window or fixed size window 320x180
+Or calculate min number of windows required to cover frame, max is 4
+Could pre-calculate offsets to embed in stream
+
+Alternative window sizes
+32 rows x 8 columns at 1bpp full byte = 64x32 pixels => 8 bits address+8 bits pixels
+5 columns x 45 rows at 1bpp full byte
+
+Character 8x8 pixel macro blocks
+20 columns x 12 character rows full character 8 bytes
+=> 1 byte #characters changed
+=> 1 byte address offset
+=> 8 bytes character data (maybe XOR'd)
+
+
+Not ordered dither but could do floyd steinberg
+For each grey scale pixel, force to 0 or 255, calculate error value then distribute
+      X   7/16
+3/16 5/16 1/16
+
+Ordered dither 2x2 threshold matrix (0-4)
+1 3
+4 2
+
+Ordered dither 3x3 threshold matrix (0-9)
+1 8 4
+7 6 3
+5 2 9
+
+Luminence preserving conversion
+Y = 0.2126R + 0.7152G + 0.0722B
+
+Extensions
+- Span across upto 4 disks
+- Specify drive order on cmd line
+- Turn debug on/off on cmd line
+- Calculate dominant colour for frame / line and add that to data stream?
+
+Puppeh's colour conversion works well but has bugs
+Can either fix the bugs or write your own...
+His general approach is to try every combination of (limited) characters in each byte
+Then sum up "cost" per line for that combination and choose that with lowest cost
+
+My approach:
+- Scale down to 78x75 max resolution
+- Turn screen into BBC colour palette - 8 RGB colours only
+- For each character cell, determine dominant colour and secondary colour
+- Now can we compute character changes that get as close to that screen configuration as possible
+- Assume separated gfx is a stylistic choice
+- Probably want to compute the dominant colour per character row
+- Then specify where the characters are not that colour?
+- Edges are more important than internal detail presumably?
+- (What is an "edge"?)
+
+My approach was crap :) Recoded Puppeh's algo so can understand it and optimise for this
+use case.
+
+TODO's
+- Span across upto 4 disks
+- Specify drive order on cmd line
+- Turn debug on/off on cmd line
+- Double-buffering of MODE 7 screen to stop tearing / raster clash with fill
+- Add hold graphics mode support to conversion - DONE
+- Standalone image2teletext conversion tool for others - sharing code - DONE
+- Make conversion full screen, not losing first two coloumns - calc start states - DONE
+- 16-bit packing scheme for colour - DONE
+- Tweak options to be able to generate BadApple output with same exe - no fill, no hold, force single colour/state? (could force fg/bg colour combo as part of conversion?)
+- Investigate use of dither or colour matching for colour
+- Ability to enable/disable use of hold & fill as cmdline params - DONE
+- Add load option back in from Puppeh branch
+- Ability to support generic frame sizes not just 76xHH pixels and start at column X - DONE
+- Replace fn argument list with packed state?
+
+- Perhaps do a different colour mapping so black/blue/cyan/white correspond to greys,
+  particularly for lowest threshold, otherwise too dark, then red/yellow/green/magenta
+  are highlight/actual colours
+- Stylised colour palette choices?  Turn into HSV?  Hue = OK as have strongest colours,
+  then use saturation value to decide whether to map to different palette?
+- Dithering likely to look bad in such low resolution? Better to use strong colour changes
+- Better to investigate this on individual images rather than keep crunching video => do
+  image2mode7 project next - DONE
+
+- 16-bit packing:
+  Previously gggg ggoo oooo oooo = 6-bits graphics 10-bits offset
+
+  Proposed:  xxxx xxfo oooo oooo = 6-bits data, 1-bit flag, 9-bits offset
+  f = 0 then data = graphics as before
+  f = 1 then data = control code
+  xxxx xx = dddc cc = 3-bits data, 3-bits code
+  ccc = 0 = do nothing (so can reach 10-bits of offset)
+  ccc = 1 = set colour (ddd = colour value)
+  ccc = 2 = set background (ddd = 0 = black, ddd = 1 = new background)
+  ccc = 3 = hold gfx (ddd = 0 = release, ddd = 1 = hold gfx)
+  ccc = 4 = sep gfx (ddd = 0 = contiguous, ddd = 1 = sep gfx)
+  ccc = 5 = spare
+  ccc = 6 = spare
+  ccc = 7 = spare
+
+
+OLD
+~~~
+Idea 14: Video playback
+~~~~~~~~~~~~~~~~~~~~~~~
+Extension: decode video frames and look at deltas.  How many pixels change per frame?  How many pixels can BBC render per frame?
+Assume 25Hz video then can render a few bytes per frame (a few thousand?)  Or decode animated GIF instead.
+Also can quantise to byte blits or quatise image to single byte accuracy
+Create a byte stream of (address,pixel) deltas for each frame and replay simple videos
+This would compress well as gzip but likely to be very slow to decode on a real Beeb
+Can use lots of offline processing to create sequences that would not be practical back in the day!
+E.g. could generate code that writes the pixels rather than reading source data (evaluate speed of load absolute vs additional
+memory overhead)
+^^ This has been done by Neurotypical VIA demo - real-time MODE 7 video (and audio) playback via GoSDC
+
+Idea for B&W video playback in MODE 7
+See nice B&W video on YouTube: https://www.youtube.com/watch?v=UkgK8eUdpAo&feature=youtu.be
+See version made for Spectrum 512k: https://www.youtube.com/watch?v=cd5iEeIe7L0
+
+Use ffmpeg to turn the video into individual frames
+Downsample frames to 78 x 75 = MODE 7 2x3 teletexels (-1 char for gfx mode)
+Max 40x25 bytes per frame
+Delta each frame (extension: have mpeg style P-frames, I-frames etc.)
+Each byte that has been changed can be encoded as 16-bits: 10 bits for the offset (0-1000)
+and 6 bits for the 6 pixels that make up the 2x3 pixel block in that byte
+Given that the first column of each row is invalid, code use this to run-length encode
+strings of bytes or just encode literals.
+Then pass entire thing through exomiser to see what it comes down to. :)
+Entire video is 3:39 long at 25Hz would be 5,475 frames.  Max 1k per frame = 5475k to compress
+ideally down to < 400Kb so could fit onto a DSD image (or 640k for an ADL image.)
+At 400Kb this is 7.3% :)  Data-rate is 1,870 bytes / sec.  Seems like this would be less
+than standard BBC disk drive speed.  Quick check suggests DFS disks are 125 kbits/sec.
+Our data rate is ~15 kbits/sec so should be fine to keep up.  That is assuming compression
+of this level can be achieved!  (Doesn't include music either.)
+Easy to use ffmpeg to extra individual frames at 78x75 resolution in jpg format.
+- load jpg or bmp files to bitmap array - Use CImg library in C++
+- convert bitmap array to MODE 7 screen data (teletexels)
+- delta each frame and calculate each frame size (16-bits per screen byte changed)
+- any frame > 500 byte changes would be replaced by a full screen frame
+- this would give an idea of the maximum data rate
+- then actually generate this data (or an approximation of)
+- pass through exomiser at different parameter settings to see if this is feasible
+
+
+
+
